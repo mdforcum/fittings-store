@@ -28,7 +28,9 @@ Shippo.
 
 ## Environment variables
 
-Set in Vercel under Project, Settings, Environment Variables. See `.env.example`.
+The two public values are committed in `.env.production`. The four secret values
+are set in Vercel under Project, Settings, Environment Variables, followed by a
+redeploy. See `.env.example`.
 
 | Name | What it is |
 | --- | --- |
