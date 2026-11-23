@@ -68,7 +68,15 @@ export async function secretKeyProblem(): Promise<string | null> {
   const oddNote = odd
     ? ` and contains ${odd} character${odd === 1 ? "" : "s"} a key never has (dots, spaces or symbols)`
     : "";
-  return `Supabase rejected the saved ${kind}. It is ${key.length} characters long${oddNote}. A complete secret key is sb_secret_ followed by about 31 more letters, digits and underscores, roughly 41 characters in all.`;
+  // A real key is random throughout. A copied on-screen placeholder repeats one symbol.
+  const tail = key.slice(15);
+  const masked = tail.length > 6 && new Set(tail).size <= 2;
+  const verdict = masked
+    ? " Everything after the first few characters is one repeated symbol, so this is the hidden placeholder Supabase shows on screen and not the key itself."
+    : /^sb_secret_[A-Za-z0-9_-]{22}_[A-Za-z0-9_-]{8}$/.test(key)
+      ? " It has the right shape for a key, so it most likely belongs to a different Supabase project or has been deleted there."
+      : " A complete secret key is sb_secret_ followed by about 31 more letters, digits and underscores, roughly 41 characters in all.";
+  return `Supabase rejected the saved ${kind}. It is ${key.length} characters long${oddNote}.${verdict}`;
 }
 
 export const T = {

@@ -42,9 +42,10 @@ export default async function AdminPage() {
         <h1>The database key needs replacing</h1>
         <p>{keyProblem}</p>
         <p className="hint">
-          In Supabase, open Project settings, API keys, and use the copy button beside the secret key (or
-          create a new secret key and copy it when it is shown in full). Paste it over SUPABASE_SECRET_KEY
-          in Vercel for Production, save, and redeploy.
+          In Supabase, check the project name at the top reads fieldline-staging. Then open Project
+          settings, API keys, and use the copy button beside the secret key (or create a new secret key
+          and copy it when it is shown in full). Paste it over SUPABASE_SECRET_KEY in Vercel for
+          Production, save, and redeploy.
         </p>
       </main>
     );
