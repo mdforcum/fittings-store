@@ -9,26 +9,67 @@ import {
   type Settings,
 } from "./catalog";
 
+// Pasted values often pick up stray spaces, line breaks or wrapping quotes.
+const clean = (v: string | undefined) =>
+  (v ?? "")
+    .trim()
+    .replace(/^["']+|["']+$/g, "")
+    .trim();
+
 export const env = {
   get url() {
-    return process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+    return clean(process.env.NEXT_PUBLIC_SUPABASE_URL);
   },
   get publishable() {
-    return process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? "";
+    return clean(process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY);
   },
   get secret() {
-    return process.env.SUPABASE_SECRET_KEY ?? "";
+    return clean(process.env.SUPABASE_SECRET_KEY);
   },
   get adminPassword() {
-    return process.env.ADMIN_PASSWORD ?? "";
+    return (process.env.ADMIN_PASSWORD ?? "").trim();
   },
   get stripe() {
-    return process.env.STRIPE_SECRET_KEY ?? "";
+    return clean(process.env.STRIPE_SECRET_KEY);
   },
   get shippo() {
-    return process.env.SHIPPO_API_TOKEN ?? "";
+    return clean(process.env.SHIPPO_API_TOKEN);
   },
 };
+
+/**
+ * Asks Supabase whether it accepts the saved secret key. Returns a plain
+ * description of what is wrong (never the key itself), or null when it works.
+ */
+export async function secretKeyProblem(): Promise<string | null> {
+  const key = env.secret;
+  if (!key || !env.url) return null;
+  const odd = (key.match(/[^A-Za-z0-9_.-]/g) ?? []).length;
+  let rejected = odd > 0;
+  if (!rejected) {
+    try {
+      const res = await fetch(`${env.url}/rest/v1/fittings_settings?select=id&limit=1`, {
+        headers: { apikey: key, Authorization: `Bearer ${key}` },
+        cache: "no-store",
+      });
+      rejected = res.status === 401 || res.status === 403;
+    } catch {
+      return null; // network trouble, not a key problem
+    }
+  }
+  if (!rejected) return null;
+  const kind = key.startsWith("sb_secret_")
+    ? "secret key"
+    : key.startsWith("sb_publishable_")
+      ? "publishable key, which is the wrong kind"
+      : key.startsWith("eyJ")
+        ? "legacy key"
+        : "value, which does not look like a Supabase key";
+  const oddNote = odd
+    ? ` and contains ${odd} character${odd === 1 ? "" : "s"} a key never has (dots, spaces or symbols)`
+    : "";
+  return `Supabase rejected the saved ${kind}. It is ${key.length} characters long${oddNote}. A complete secret key is sb_secret_ followed by about 31 more letters, digits and underscores, roughly 41 characters in all.`;
+}
 
 export const T = {
   products: "fittings_products",
