@@ -50,18 +50,72 @@ const ART: Record<string, ReactNode> = {
   ),
 };
 
-export function FittingArt({ type }: { type: string }) {
+/** Where the threads sit on each drawing, for the thread callout: [x from, x to]. */
+const THREADS: Record<string, Array<[number, number]>> = {
+  "jic-cap": [[37, 85]],
+  "jic-plug": [[27, 58]],
+  "orb-plug": [[65, 100]],
+  "breather-plug": [[45, 93]],
+  adapter: [
+    [15, 39],
+    [81, 105],
+  ],
+};
+
+/** What seals it, in a few words, for the drawing's note. */
+const SEAL: Record<string, string> = {
+  "jic-cap": "37° FLARE",
+  "jic-plug": "37° FLARE",
+  "orb-plug": "O-RING BOSS",
+  "breather-plug": "PIPE THREAD",
+};
+
+/**
+ * The line drawing of a fitting. Given its dash size and thread, it reads like
+ * a shop drawing: the thread called out under the threads, the dash size and
+ * how it seals along the top.
+ */
+export function FittingArt({ type, dash, thread }: { type: string; dash?: string; thread?: string }) {
+  const art = ART[type] ?? ART.adapter;
+  const spans = THREADS[type] ?? THREADS.adapter;
+  const labelled = !!(dash || thread);
+  if (!labelled) {
+    return (
+      <svg viewBox="0 0 120 80" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinejoin="round" strokeLinecap="round" aria-hidden="true">
+        {art}
+      </svg>
+    );
+  }
+  const seal = SEAL[type];
   return (
-    <svg
-      viewBox="0 0 120 80"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2.2"
-      strokeLinejoin="round"
-      strokeLinecap="round"
-      aria-hidden="true"
-    >
-      {ART[type] ?? ART.adapter}
+    <svg className="labelled" viewBox="0 -15 120 112" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinejoin="round" strokeLinecap="round" aria-hidden="true">
+      {art}
+      <g className="callout" strokeWidth="0.9">
+        {thread &&
+          spans.map(([a, b]) => (
+            <g key={a}>
+              <path d={`M${a} 68v8M${b} 68v8M${a} 73h${b - a}`} />
+              <path d={`M${a + 3} 71l-3 2 3 2M${b - 3} 71l3 2-3 2`} />
+            </g>
+          ))}
+      </g>
+      <g className="callout-text" fill="currentColor" stroke="none" fontFamily="ui-monospace, Menlo, monospace" textAnchor="middle">
+        {thread && (
+          <text x="60" y="91" fontSize="10.5" fontWeight="700">
+            {thread}
+          </text>
+        )}
+        {dash && (
+          <text x="118" y="-4" fontSize="10.5" fontWeight="700" textAnchor="end">
+            {dash}
+          </text>
+        )}
+        {seal && (
+          <text x="60" y="-4" fontSize="7.5" textAnchor="middle" letterSpacing="0.4">
+            {seal}
+          </text>
+        )}
+      </g>
     </svg>
   );
 }
@@ -70,7 +124,7 @@ export function FittingArt({ type }: { type: string }) {
 export function Picture({ product, path, alt = "" }: { product: Product; path?: string; alt?: string }) {
   const src = path ?? product.photos[0];
   const [broken, setBroken] = useState<string | null>(null);
-  if (!src || broken === src) return <FittingArt type={product.type} />;
+  if (!src || broken === src) return <FittingArt type={product.type} dash={product.dash} thread={product.thread} />;
   // eslint-disable-next-line @next/next/no-img-element -- photos are already sized on upload
   return <img src={photoUrl(src)} alt={alt} loading="lazy" onError={() => setBroken(src)} />;
 }
