@@ -124,5 +124,5 @@ export function cleanTapeReading(raw: unknown): { a: number | null; b: number | 
   const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v >= 0 && v < 1300 ? Math.round(v * 16) / 16 : null);
   const a = n(r.a_inches);
   const b = n(r.b_inches);
-  return { a, b, length: lengthFromTape(a, b), note: typeof r.note === "string" ? r.note.trim().slice(0, 240) : "" };
+  return { a, b, length: lengthFromTape(a, b), note: typeof r.note === "string" ? r.note.trim().slice(0, 600) : "" };
 }

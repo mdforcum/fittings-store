@@ -72,6 +72,14 @@ export type HoseReading = {
 };
 
 const s = (v: unknown, max: number) => (typeof v === "string" ? v.replace(/\s+/g, " ").trim().slice(0, max) : "");
+/** Shortens to whole sentences, so the customer never sees a cut-off instruction. */
+function sentences(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const cut = text.slice(0, max);
+  const end = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf("? "), cut.lastIndexOf("! "));
+  return end > 0 ? cut.slice(0, end + 1) : `${cut.slice(0, cut.lastIndexOf(" "))}…`;
+}
+
 const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
 
 /**
@@ -110,6 +118,6 @@ export function cleanHoseReading(raw: unknown): HoseReading {
       return l != null && l > 0 && l < 1200 ? Math.round(l * 8) / 8 : null;
     })(),
     confidence: r.confidence === "high" || r.confidence === "medium" ? r.confidence : "low",
-    ask: s(r.ask, 240),
+    ask: sentences(s(r.ask, 2000), 420),
   };
 }

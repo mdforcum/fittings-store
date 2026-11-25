@@ -146,3 +146,11 @@ test("builds from a browser are cleaned", () => {
   assert.equal(b.qty, 2);
   assert.equal(b.rated_psi, 3000);
 });
+
+test("the reader's advice is never cut mid-sentence", async () => {
+  const { cleanHoseReading } = await import("../lib/hose-read.ts");
+  const long = "Send a close-up of each end. ".repeat(30) + "Lay a tape along the hose.";
+  const ask = cleanHoseReading({ ask: long }).ask;
+  assert.ok(ask.length <= 420);
+  assert.ok(ask.endsWith("."));
+});
