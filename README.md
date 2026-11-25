@@ -68,6 +68,25 @@ Finds the distributor's own product photo for each stocked part, by part number.
 
 Sources are defined in `lib/supplier.ts`.
 
+## Catalog details (the foundation)
+
+Every item can carry the ten shared structures from the category plan: its
+place on the category tree, specs from that category's template, sizes sold as
+one family, every number it goes by (OEM, aftermarket, supplier, superseded,
+UPC), machine fitment, kit parts, stock at other places, its shipping profile,
+extra charges such as a core charge, and documents. Open an item in Inventory
+and press **Catalog details**.
+
+- Nothing here changes the shop on its own. The storefront starts reading it
+  category by category. Only the hydraulic fittings' categories are switched on.
+- The rules (kit stock, delivery promise, how a cart ships, surcharge lines,
+  part-number search) live in `lib/foundation.ts` and are tested in
+  `tests/foundation.test.ts`.
+- Survey cards now match an item through any of its cross-reference numbers, not
+  only its listed part number.
+- If the details screen says a setup step is needed, run the "Catalog
+  foundation" section of `supabase/schema.sql` in the Supabase SQL editor.
+
 ## Environment variables
 
 The two public values are committed in `.env.production`. The secret values
@@ -95,8 +114,10 @@ Tables live in the shared `fieldline-staging` Supabase project with a
 `fittings_` prefix. `supabase/schema.sql` is the full definition and
 `supabase/seed.sql` loads the 20 items from the ADK600 cap and plug kit. They are
 applied by hand, outside that project's migration history, so they never collide
-with Backroad Iron migrations. Shoppers can read `fittings_products` and
-`fittings_settings`; every other table is reachable only with the secret key.
+with Backroad Iron migrations. Shoppers can read `fittings_products`,
+`fittings_settings` and the catalog structures (categories, cross-references,
+machines, fitment, kit parts, surcharges, documents). Stock counts at other places
+and everything else are reachable only with the secret key.
 
 ## Working on it
 

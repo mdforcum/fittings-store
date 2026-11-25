@@ -3,6 +3,7 @@
 import crypto from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isAdmin, sameOrigin } from "@/lib/auth";
+import { placeByType } from "@/lib/foundation-server";
 import { TYPES } from "@/lib/catalog";
 import type { Capture } from "@/lib/match";
 import { mergeTyped } from "@/lib/reading";
@@ -176,6 +177,7 @@ async function run(action: string, a: Payload, db: SupabaseClient): Promise<Reco
           sort,
         }),
       );
+      await placeByType(db, newId, type);
       return { product_id: newId };
     }
 

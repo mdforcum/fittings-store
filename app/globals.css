@@ -264,3 +264,18 @@ dialog.sheet { margin: 0 0 0 auto; width: min(440px, 100%); max-width: 100%; hei
 .sp-info > span { font-size: .8rem; color: var(--muted); }
 .sp-info .field { min-width: 0; flex: 1; padding: 6px 10px; }
 .sp-act { display: grid; gap: 2px; justify-items: end; }
+
+/* Catalog details */
+.det-open { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; border: 1px solid var(--rule); border-radius: 3px; background: var(--sunken); }
+.det section { display: grid; gap: 10px; padding-top: 14px; border-top: 1px solid var(--rule); }
+.det section:first-child { border-top: 0; padding-top: 0; }
+.det-row { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+.det-row:has(> .det-place) { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr); }
+.det-row:has(> select:first-child + input + .x) { grid-template-columns: minmax(0, 1fr) 80px auto; }
+.det-place { display: grid; font-weight: 600; font-size: .92rem; }
+.det-place small { font-weight: 400; color: var(--muted); }
+.det-note { padding: 12px; border-left: 4px solid var(--hold); background: var(--hold-bg); }
+@media (max-width: 560px) {
+  .det-row { grid-template-columns: 1fr 1fr auto; }
+  .det-row > select:first-child { grid-column: 1 / -1; }
+}

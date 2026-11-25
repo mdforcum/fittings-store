@@ -21,6 +21,7 @@ import {
   normalizeSettings,
   priceFromMargin,
 } from "@/lib/catalog";
+import { placeByType } from "@/lib/foundation-server";
 import { getStripe } from "@/lib/payments";
 import { T, adminDb, env, getConfig, json, setConfig } from "@/lib/server";
 import { buyLabel, freshLabelUrl, getRates } from "@/lib/shippo";
@@ -161,6 +162,7 @@ async function run(action: string, a: Payload, db: SupabaseClient, origin: strin
       const top = await db.from(T.products).select("sort").order("sort", { ascending: false }).limit(1);
       const sort = ((top.data?.[0]?.sort as number | undefined) ?? 0) + 10;
       await must(db.from(T.products).insert({ id: newId, qty: 0, ...fields, sort }));
+      await placeByType(db, newId, String(fields.type ?? "other"));
       return { id: newId };
     }
 
@@ -168,6 +170,7 @@ async function run(action: string, a: Payload, db: SupabaseClient, origin: strin
       const fields = productFields(a.fields);
       if (Object.keys(fields).length === 0) return {};
       await must(db.from(T.products).update({ ...fields, updated_at: now() }).eq("id", id));
+      if (typeof fields.type === "string") await placeByType(db, id, fields.type);
       return {};
     }
 

@@ -14,6 +14,7 @@ import {
 } from "@/lib/catalog";
 import type { Act, Say } from "../Admin";
 import { Modal, Picture } from "../ui";
+import DetailsEditor from "./Details";
 
 type Props = { data: AdminData; act: Act; say: Say; reload: () => Promise<void> };
 type Filter = "all" | "live" | "out" | "noprice";
@@ -357,6 +358,7 @@ function ItemEditor({
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [details, setDetails] = useState(false);
   const set = (key: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
     setF((cur) => ({ ...cur, [key]: e.target.value }));
 
@@ -501,6 +503,18 @@ function ItemEditor({
           <textarea id="f-desc" maxLength={600} value={f.description} onChange={set("description")} />
         </label>
 
+        {product && (
+          <div className="det-open">
+            <div>
+              <h3>Catalog details</h3>
+              <p className="hint">Category, specs, cross-reference numbers, shipping size, core charge, kit parts, stock elsewhere, documents.</p>
+            </div>
+            <button type="button" className="btn ghost sm" onClick={() => setDetails(true)}>
+              Open
+            </button>
+          </div>
+        )}
+
         <div>
           <h3>Photos</h3>
           <p className="hint">
@@ -554,6 +568,7 @@ function ItemEditor({
           </>
         )}
       </div>
+      {details && product && <DetailsEditor product={product} say={say} onClose={() => setDetails(false)} />}
     </Modal>
   );
 }

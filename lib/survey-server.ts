@@ -1,6 +1,7 @@
 // Server-side helpers for the inventory survey.
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { groupCaptures, normPart, type Capture } from "./match";
+import { numberIndex } from "./foundation-server";
 import { T } from "./server";
 import type { Location, StoreMatch, SurveyData } from "./survey-types";
 import { visionReady } from "./vision";
@@ -76,17 +77,27 @@ export async function loadSurvey(db: SupabaseClient, wanted: string | null): Pro
     if (rows.error) throw new Error(rows.error.message);
     captures = await withPhotoLinks(db, (rows.data ?? []).map(normalizeCapture));
   }
-  const products = await db.from(T.products).select("id, name, part_number, qty, photos");
+  const [products, numbers] = await Promise.all([
+    db.from(T.products).select("id, name, part_number, qty, photos"),
+    numberIndex(db),
+  ]);
   const store: Record<string, StoreMatch> = {};
+  const byId = new Map<string, StoreMatch>();
   for (const p of products.data ?? []) {
-    const key = normPart((p.part_number as string) ?? "");
-    if (!key) continue;
-    store[key] = {
+    const match: StoreMatch = {
       id: p.id as string,
       name: p.name as string,
       qty: (p.qty as number) ?? 0,
       photos: Array.isArray(p.photos) ? p.photos.length : 0,
     };
+    byId.set(match.id, match);
+    const key = normPart((p.part_number as string) ?? "");
+    if (key) store[key] = match;
+  }
+  // A card that shows an OEM or supplier number still finds our item through its cross-references.
+  for (const [key, id] of numbers) {
+    const match = byId.get(id);
+    if (match && !store[key]) store[key] = match;
   }
   return {
     locations,
