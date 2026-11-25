@@ -26,9 +26,51 @@ later.
 Products are entered once, in Inventory. Nothing is maintained inside Stripe or
 Shippo.
 
+## Inventory survey (`/capture` and the Survey tab)
+
+For walking a parts room with a phone: photograph inventory cards and parts bins,
+scan codes, or type entries in, in any order, over any number of days.
+
+- **`/capture`** is the phone page. Every capture is saved on the phone first and
+  uploaded when there is signal, so it works with none. Open it once with signal
+  and wait for "Ready for offline use"; after that the page itself opens offline
+  too. Barcodes and QR codes are read on the phone. Sign-in is the back-office
+  password.
+- **Reading.** Each uploaded photo is read by Claude's vision API: part number,
+  description, aisle and bin, the on-hand quantity from a card, or a count of the
+  parts in a bin with a stated confidence. A deep pile cannot be counted from a
+  photo, and the reading says so instead of guessing. Needs `ANTHROPIC_API_KEY`.
+- **Matching.** Captures are the only facts stored. Parts are worked out fresh
+  from the whole pile every time (`lib/match.ts`): captures that share a part
+  number or a scanned code are one part; captures that share only an aisle and
+  bin are joined but flagged for a one-tap confirmation. Because nothing is
+  matched at capture time, the order photos arrive in cannot change the result.
+- **Survey tab** in the back office shows the parts, card-versus-bin mismatches,
+  look-alike part numbers (0/O, 1/I), and captures still waiting for a match.
+  From there a part can be added to the shop catalog, a count can be applied to
+  an existing item, and a capture photo can be used as a shop photo.
+
+Survey photos live in a private storage bucket and are only ever shown to the
+signed-in owner.
+
+## Supplier photos tab
+
+Finds the distributor's own product photo for each stocked part, by part number.
+
+- It reads the supplier's category listing pages and product pages only. It obeys
+  the site's `robots.txt`, including the crawl delay, and never uses site search.
+  One request is made at a time; the tab shows the wait.
+- An item the listings do not cover can be pointed at its product page by hand.
+- **Imported photos are held, out of the shop, until permission is recorded** on
+  that tab. Recording it publishes them; withdrawing it takes them back out.
+  Product photos belong to whoever took them, so get the supplier's answer in
+  writing first.
+
+Sources are defined in `lib/supplier.ts`.
+
 ## Environment variables
 
-The two public values are committed in `.env.production`. The four secret values
+The two public values are committed in `.env.production`. The secret values
 are set in Vercel under Project, Settings, Environment Variables, followed by a
 redeploy. See `.env.example`.
 
@@ -40,6 +82,8 @@ redeploy. See `.env.example`.
 | `ADMIN_PASSWORD` | Password for `/admin`. Use a long one. |
 | `STRIPE_SECRET_KEY` | Stripe secret key (`sk_test_...` or `sk_live_...`) |
 | `SHIPPO_API_TOKEN` | Shippo API token (`shippo_test_...` or `shippo_live_...`) |
+| `ANTHROPIC_API_KEY` | Optional. Anthropic API key; switches on reading of survey photos. |
+| `ANTHROPIC_MODEL` | Optional. Model used to read photos. Defaults to `claude-sonnet-5-5`. |
 
 After Stripe's key is in place, open `/admin`, Settings, and press **Connect**
 next to "Stripe order reporting". That registers the webhook with Stripe and
@@ -59,7 +103,8 @@ with Backroad Iron migrations. Shoppers can read `fittings_products` and
 ```bash
 npm install
 npm run dev      # local site
-npm run check    # lint, type check and production build: run before every push
+npm test         # unit tests: matching, photo reading rules, supplier pages, barcodes
+npm run check    # lint, type check, tests and production build: run before every push
 ```
 
 Money is stored in cents. Margin means profit as a share of the sell price:

@@ -6,12 +6,22 @@ import type { ActionReply, AdminData } from "@/lib/admin-types";
 import Inventory from "./admin/Inventory";
 import Orders from "./admin/Orders";
 import SettingsTab from "./admin/SettingsTab";
+import SupplierPhotos from "./admin/SupplierPhotos";
+import Survey from "./admin/Survey";
 import { Toast, type ToastState } from "./ui";
 
 export type Act = (action: string, payload?: Record<string, unknown>) => Promise<Record<string, unknown> | null>;
 export type Say = (text: string, bad?: boolean) => void;
 
-type Tab = "inventory" | "orders" | "settings";
+type Tab = "inventory" | "orders" | "survey" | "photos" | "settings";
+
+const TAB_NAMES: Record<Tab, string> = {
+  inventory: "Inventory",
+  orders: "Orders",
+  survey: "Survey",
+  photos: "Supplier photos",
+  settings: "Settings",
+};
 
 export default function Admin() {
   const router = useRouter();
@@ -80,7 +90,7 @@ export default function Admin() {
             Back office
           </Link>
           <nav aria-label="Back office">
-            {(["inventory", "orders", "settings"] as Tab[]).map((t) => (
+            {(Object.keys(TAB_NAMES) as Tab[]).map((t) => (
               <button
                 key={t}
                 type="button"
@@ -88,7 +98,7 @@ export default function Admin() {
                 aria-current={tab === t ? "page" : undefined}
                 onClick={() => setTab(t)}
               >
-                {t === "inventory" ? "Inventory" : t === "orders" ? `Orders${toShip ? ` (${toShip})` : ""}` : "Settings"}
+                {t === "orders" && toShip ? `Orders (${toShip})` : TAB_NAMES[t]}
               </button>
             ))}
             <Link href="/">View shop</Link>
@@ -99,8 +109,10 @@ export default function Admin() {
         </div>
       </header>
       <main className="wrap">
-        {!data && !loadError && <p className="empty">Loading the store…</p>}
-        {loadError && (
+        {tab === "survey" && <Survey say={say} />}
+        {tab === "photos" && <SupplierPhotos say={say} />}
+        {!data && !loadError && tab !== "survey" && tab !== "photos" && <p className="empty">Loading the store…</p>}
+        {loadError && tab !== "survey" && tab !== "photos" && (
           <p className="empty err" role="alert">
             {loadError}
           </p>

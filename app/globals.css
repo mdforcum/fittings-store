@@ -215,3 +215,52 @@ dialog.sheet { margin: 0 0 0 auto; width: min(440px, 100%); max-width: 100%; hei
 #toast { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 20; max-width: calc(100% - 32px); padding: 10px 14px; border-radius: 3px; background: var(--ink); color: var(--bg); font-weight: 500; font-size: .92rem; box-shadow: 0 6px 20px rgba(0, 0, 0, .25); }
 #toast.bad { background: var(--bad); color: #fff; }
 .center { max-width: 520px; margin: 0 auto; padding: 48px 16px; display: grid; gap: 16px; }
+
+/* capture (phone) */
+.cap { display: grid; gap: 14px; padding-top: 14px; padding-bottom: 40px; }
+.cap-status { display: flex; flex-wrap: wrap; gap: 6px; }
+.cap-place .inline { flex-wrap: nowrap; }
+.cap-place .field { flex: 1; min-width: 0; min-height: 42px; }
+.cap-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.cap-btn { display: grid; gap: 4px; align-content: center; min-height: 104px; padding: 14px; border: 1px solid var(--primary); border-radius: 4px; background: var(--primary); color: var(--on-primary); text-align: left; cursor: pointer; }
+.cap-btn b { font: 800 1.35rem/1.05 var(--display); text-transform: uppercase; letter-spacing: .03em; }
+.cap-btn span { font-size: .82rem; opacity: .85; }
+.cap-btn:disabled { background: var(--sunken); border-color: var(--rule); color: var(--muted); cursor: not-allowed; }
+.cap-h { display: flex; align-items: baseline; gap: 10px; margin-top: 6px; font: 800 1.4rem/1 var(--display); text-transform: uppercase; letter-spacing: .03em; }
+.cap-h span { font: 400 .8rem/1 var(--mono); color: var(--muted); }
+.cap-list { border-top: 1px solid var(--rule); }
+.cap-row { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; width: 100%; padding: 10px 0; border: 0; border-bottom: 1px solid var(--rule); background: none; text-align: left; cursor: pointer; }
+.cap-info { display: grid; min-width: 0; }
+.cap-info strong { font-weight: 600; }
+.cap-info small { font: 400 .76rem/1 var(--mono); color: var(--muted); margin-left: 4px; white-space: nowrap; }
+.cap-info > span { font-size: .86rem; color: var(--muted); overflow-wrap: anywhere; }
+.cap-none { display: grid; place-items: center; width: 100%; height: 100%; font: 600 1rem/1 var(--mono); color: var(--muted); }
+.cap-photo { width: 100%; max-height: 46vh; object-fit: contain; background: var(--sunken); border: 1px solid var(--rule); }
+
+/* survey (back office) */
+.sv-pick { width: auto; min-width: 180px; flex: 1; max-width: 360px; }
+.sv-list { display: grid; gap: 12px; margin-top: 14px; }
+.sv-part { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--rule); background: var(--surface); }
+.sv-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 14px; }
+.sv-id { display: grid; min-width: 0; }
+.sv-id strong { font-size: 1.1rem; font-weight: 600; overflow-wrap: anywhere; }
+.sv-id span { color: var(--muted); font-size: .9rem; overflow-wrap: anywhere; }
+.sv-where { font-size: .86rem; color: var(--muted); }
+.sv-nums { display: flex; flex-wrap: wrap; gap: 6px; }
+.sv-thumbs { display: flex; flex-wrap: wrap; gap: 8px; }
+.sv-thumb { position: relative; width: 72px; height: 72px; padding: 0; border: 1px solid var(--rule); background: var(--sunken); color: var(--muted); cursor: pointer; overflow: hidden; }
+.sv-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.sv-thumb span { display: grid; place-items: center; height: 100%; font: 600 1rem/1 var(--mono); }
+.sv-thumb small { position: absolute; left: 0; bottom: 0; padding: 1px 5px; background: var(--lid); color: var(--on-lid); font: 600 .64rem/1.5 var(--mono); }
+.sv-store { padding-top: 8px; border-top: 1px solid var(--rule); }
+
+/* supplier photos */
+.sp-list { border-top: 1px solid var(--rule); }
+.sp-row { display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--rule); }
+.sp-pic { width: 64px; height: 64px; display: grid; place-items: center; border: 1px solid var(--rule); background: #fff; color: var(--muted); overflow: hidden; }
+.sp-pic img { width: 100%; height: 100%; object-fit: contain; }
+.sp-info { display: grid; gap: 2px; min-width: 0; }
+.sp-info strong { font-weight: 600; overflow-wrap: anywhere; }
+.sp-info > span { font-size: .8rem; color: var(--muted); }
+.sp-info .field { min-width: 0; flex: 1; padding: 6px 10px; }
+.sp-act { display: grid; gap: 2px; justify-items: end; }

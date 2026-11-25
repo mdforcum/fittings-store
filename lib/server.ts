@@ -35,6 +35,16 @@ export const env = {
   get shippo() {
     return clean(process.env.SHIPPO_API_TOKEN);
   },
+  /** Anthropic API key: lets the survey read photos of inventory cards and bins. */
+  get anthropic() {
+    return clean(process.env.ANTHROPIC_API_KEY);
+  },
+  get anthropicBase() {
+    return (clean(process.env.ANTHROPIC_BASE_URL) || "https://api.anthropic.com").replace(/\/+$/, "");
+  },
+  get anthropicModel() {
+    return clean(process.env.ANTHROPIC_MODEL) || "claude-sonnet-5-5";
+  },
 };
 
 /**
@@ -87,6 +97,12 @@ export const T = {
   orders: "fittings_orders",
   items: "fittings_order_items",
   bucket: "fittings-photos",
+  locations: "fittings_locations",
+  captures: "fittings_captures",
+  supplierIndex: "fittings_supplier_index",
+  supplierPhotos: "fittings_supplier_photos",
+  /** Private: survey photos and supplier photos still on hold. */
+  privateBucket: "fittings-private",
 } as const;
 
 const clientOptions = { auth: { persistSession: false, autoRefreshToken: false } };

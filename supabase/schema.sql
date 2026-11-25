@@ -181,3 +181,92 @@ values ('fittings-photos', 'fittings-photos', true, 5242880, array['image/jpeg',
 on conflict (id) do nothing;
 
 insert into public.fittings_settings (id) values (1) on conflict (id) do nothing;
+
+-- ---------------------------------------------------------------------------
+-- Inventory survey: photographing inventory cards and parts bins at a location.
+--
+-- Captures are the only facts stored. Which captures belong to the same part
+-- is worked out fresh from the whole pile every time it is read (lib/match.ts),
+-- so the order photos were taken in can never change the answer.
+-- ---------------------------------------------------------------------------
+
+create table if not exists public.fittings_locations (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.fittings_captures (
+  -- Made on the phone, so an upload that is retried never creates a second row.
+  id uuid primary key,
+  location_id uuid not null references public.fittings_locations(id) on delete cascade,
+  kind text not null check (kind in ('card','bin','code','manual')),
+  captured_at timestamptz not null,
+  created_at timestamptz not null default now(),
+  status text not null default 'pending' check (status in ('pending','read','failed')),
+  read_error text not null default '',
+  photo text,
+  part_number text not null default '',
+  upc text not null default '',
+  description text not null default '',
+  part_type text not null default '',
+  aisle text not null default '',
+  bin text not null default '',
+  qty_on_card integer check (qty_on_card is null or qty_on_card >= 0),
+  count_seen integer check (count_seen is null or count_seen >= 0),
+  count_confidence text check (count_confidence is null or count_confidence in ('high','medium','low')),
+  count_note text not null default '',
+  codes text[] not null default '{}',
+  notes text not null default '',
+  use_location boolean not null default true,
+  confirmed boolean not null default false,
+  edited boolean not null default false
+);
+
+create index if not exists fittings_captures_location_idx
+  on public.fittings_captures(location_id, captured_at desc);
+
+-- ---------------------------------------------------------------------------
+-- Supplier photos: product photos read from a distributor's own catalog pages.
+-- They stay on hold, out of the shop, until permission is recorded in Settings.
+-- ---------------------------------------------------------------------------
+
+create table if not exists public.fittings_supplier_index (
+  source text not null,
+  part_norm text not null,
+  part_number text not null,
+  name text not null default '',
+  page_url text not null,
+  image_url text not null,
+  seen_at timestamptz not null default now(),
+  primary key (source, part_norm)
+);
+
+create table if not exists public.fittings_supplier_photos (
+  id uuid primary key default gen_random_uuid(),
+  product_id text not null references public.fittings_products(id) on delete cascade,
+  source text not null,
+  page_url text not null default '',
+  image_url text not null,
+  held_path text not null,
+  public_path text,
+  imported_at timestamptz not null default now(),
+  unique (product_id, image_url)
+);
+
+alter table public.fittings_locations enable row level security;
+alter table public.fittings_captures enable row level security;
+alter table public.fittings_supplier_index enable row level security;
+alter table public.fittings_supplier_photos enable row level security;
+
+revoke all on public.fittings_locations, public.fittings_captures,
+  public.fittings_supplier_index, public.fittings_supplier_photos
+  from anon, authenticated;
+grant all on public.fittings_locations, public.fittings_captures,
+  public.fittings_supplier_index, public.fittings_supplier_photos
+  to service_role;
+
+-- Survey photos and supplier photos on hold: never public, read only through the server.
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('fittings-private', 'fittings-private', false, 5242880, array['image/jpeg','image/png','image/webp'])
+on conflict (id) do nothing;
