@@ -612,3 +612,49 @@ update public.fittings_products set category_id = case type
     else 'other-fittings'
   end
 where category_id is null;
+
+-- ---------------------------------------------------------------------------
+-- Hydraulic hose builder: saved builds (each with our own tag number), the
+-- requests customers send, and which places can build a hose and how fast.
+-- ---------------------------------------------------------------------------
+
+alter table public.fittings_locations
+  add column if not exists builds_hoses boolean not null default false,
+  add column if not exists one_hour boolean not null default false,
+  add column if not exists hours text not null default '',
+  add column if not exists hose_lines text not null default '';
+
+create table if not exists public.fittings_hose_builds (
+  tag text primary key check (tag ~ '^BH-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$'),
+  spec jsonb not null check (jsonb_typeof(spec) = 'object'),
+  source text not null default 'customer' check (source in ('customer','shop','oem')),
+  -- OEM part numbers this build replaces, upper case letters and digits only.
+  oem_numbers text[] not null default '{}',
+  make text not null default '',
+  model text not null default '',
+  created_at timestamptz not null default now()
+);
+create index if not exists fittings_hose_builds_oem_idx on public.fittings_hose_builds using gin (oem_numbers);
+
+create table if not exists public.fittings_hose_requests (
+  id uuid primary key default gen_random_uuid(),
+  number bigint generated always as identity (start with 5001),
+  tag text not null references public.fittings_hose_builds(tag) on delete restrict,
+  mode text not null check (mode in ('now','shop')),
+  status text not null default 'new' check (status in ('new','sent','building','ready','done','cancelled')),
+  name text not null default '',
+  phone text not null default '',
+  email text not null default '',
+  zip text not null default '',
+  machine text not null default '',
+  notes text not null default '',
+  builder_id uuid references public.fittings_locations(id) on delete set null,
+  created_at timestamptz not null default now(),
+  check (phone <> '' or email <> '')
+);
+create index if not exists fittings_hose_requests_new_idx on public.fittings_hose_requests(status, created_at desc);
+
+alter table public.fittings_hose_builds enable row level security;
+alter table public.fittings_hose_requests enable row level security;
+revoke all on public.fittings_hose_builds, public.fittings_hose_requests from anon, authenticated;
+grant all on public.fittings_hose_builds, public.fittings_hose_requests to service_role;

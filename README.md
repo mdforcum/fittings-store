@@ -87,6 +87,31 @@ and press **Catalog details**.
 - If the details screen says a setup step is needed, run the "Catalog
   foundation" section of `supabase/schema.sql` in the Supabase SQL editor.
 
+## Hose builder (`/hose` and the Hoses tab)
+
+Replacing a hydraulic hose assembly, three ways in and one build sheet out:
+
+- **Snap the old hose.** Photos of the printing along the hose and of each end
+  are read (needs `ANTHROPIC_API_KEY`); the printed layline text is also parsed
+  directly, and where it says something plainly it wins. The customer checks
+  every field before ordering. Reads are limited per visitor per hour.
+- **Tag or part number.** Every request gets our own tag (`BH-XXXX-XXXX`). The
+  tag brings the build back for an identical replacement. Builds can also be
+  stored against OEM part numbers.
+- **By hand.** Hose size, type and printed working pressure, both ends
+  (connection, gender, shape, thread size), length and the angle between
+  elbows. A caliper measurement identifies the thread.
+
+The engine is `lib/hose.ts` (tested in `tests/hose.test.ts`). A build sheet is
+refused until the hose's rated pressure is given and covers the system pressure;
+pressures are never invented. The sheet states where length is measured, the
+length and angle tolerances, and the rule that hose and fittings come from one
+maker's system crimped to that maker's spec.
+
+Machine-down requests are shown the places marked in the Hoses tab as
+promising a one-hour build; with none, the customer is told to call the store.
+Shop requests are confirmed and priced by hand for now.
+
 ## Environment variables
 
 The two public values are committed in `.env.production`. The secret values

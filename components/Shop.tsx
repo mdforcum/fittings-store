@@ -142,6 +142,7 @@ export default function Shop({ products, settings, ok, openCart }: Props) {
             {settings.store_name}
           </Link>
           <nav aria-label="Store">
+            <Link href="/hose">Hose builder</Link>
             <button type="button" className="cartbtn" onClick={() => setCartOpen(true)}>
               Cart <span className="count">{count}</span>
             </button>

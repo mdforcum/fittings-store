@@ -9,7 +9,37 @@ export class VisionError extends Error {}
 
 /** Sends the photo and gets back a filled-in reading. Throws VisionError with a plain message on failure. */
 export async function readPhoto(kind: CaptureKind, bytes: Buffer, mediaType: string): Promise<Reading> {
+  const input = await askVision({
+    system: readingPrompt(kind),
+    tool: "record_reading",
+    description: "Record what this inventory photo shows.",
+    schema: READING_SCHEMA,
+    images: [{ bytes, mediaType }],
+    text: "Record what this photo shows.",
+  });
+  return cleanReading(input);
+}
+
+/**
+ * Asks Claude to fill in one tool call from one or more photos, and returns
+ * the tool's input as sent. Throws VisionError with a plain message on failure.
+ */
+export async function askVision(opts: {
+  system: string;
+  tool: string;
+  description: string;
+  schema: Record<string, unknown>;
+  images: Array<{ bytes: Buffer; mediaType: string; caption?: string }>;
+  text: string;
+  maxTokens?: number;
+}): Promise<unknown> {
   if (!env.anthropic) throw new VisionError("Photo reading is not switched on yet.");
+  const content: Array<Record<string, unknown>> = [];
+  for (const img of opts.images) {
+    if (img.caption) content.push({ type: "text", text: img.caption });
+    content.push({ type: "image", source: { type: "base64", media_type: img.mediaType, data: img.bytes.toString("base64") } });
+  }
+  content.push({ type: "text", text: opts.text });
   let res: Response;
   try {
     res = await fetch(`${env.anthropicBase}/v1/messages`, {
@@ -21,25 +51,11 @@ export async function readPhoto(kind: CaptureKind, bytes: Buffer, mediaType: str
       },
       body: JSON.stringify({
         model: env.anthropicModel,
-        max_tokens: 1024,
-        system: readingPrompt(kind),
-        tools: [
-          {
-            name: "record_reading",
-            description: "Record what this inventory photo shows.",
-            input_schema: READING_SCHEMA,
-          },
-        ],
-        tool_choice: { type: "tool", name: "record_reading" },
-        messages: [
-          {
-            role: "user",
-            content: [
-              { type: "image", source: { type: "base64", media_type: mediaType, data: bytes.toString("base64") } },
-              { type: "text", text: "Record what this photo shows." },
-            ],
-          },
-        ],
+        max_tokens: opts.maxTokens ?? 1024,
+        system: opts.system,
+        tools: [{ name: opts.tool, description: opts.description, input_schema: opts.schema }],
+        tool_choice: { type: "tool", name: opts.tool },
+        messages: [{ role: "user", content }],
       }),
       signal: AbortSignal.timeout(45_000),
       cache: "no-store",
@@ -56,7 +72,7 @@ export async function readPhoto(kind: CaptureKind, bytes: Buffer, mediaType: str
     throw new VisionError((detail?.error?.message ?? "The photo could not be read.").slice(0, 200));
   }
   const body = (await res.json()) as { content?: Array<{ type: string; name?: string; input?: unknown }> };
-  const call = body.content?.find((block) => block.type === "tool_use" && block.name === "record_reading");
+  const call = body.content?.find((block) => block.type === "tool_use" && block.name === opts.tool);
   if (!call) throw new VisionError("The photo reader returned nothing usable.");
-  return cleanReading(call.input);
+  return call.input;
 }
