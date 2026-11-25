@@ -1,7 +1,12 @@
 // Server side of the catalog foundation: reading and saving an item's details.
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
+  CONDITIONS,
   DOC_KINDS,
+  MACHINE_KINDS,
+  MachineProblem,
+  PRICE_MODES,
+  cleanMachine,
   EMPTY_DETAILS,
   FREIGHT_CLASSES,
   PRODUCT_KINDS,
@@ -16,7 +21,9 @@ import {
   type CatalogMeta,
   type Category,
   type Details,
+  type FitRow,
   type KitItem,
+  type Machine,
   type Location,
   type SpecValue,
 } from "./foundation";
@@ -30,6 +37,8 @@ export const FT = {
   stock: "fittings_stock",
   surcharges: "fittings_surcharges",
   documents: "fittings_documents",
+  diagrams: "fittings_diagrams",
+  quotes: "fittings_quote_requests",
 } as const;
 
 /** The database has not had the foundation section of supabase/schema.sql applied yet. */
@@ -57,16 +66,41 @@ function check(error: PgError): void {
 }
 
 
+export function normalizeMachine(r: Record<string, unknown>): Machine {
+  const kind = MACHINE_KINDS.find((k) => k.id === r.kind)?.id ?? "other";
+  return {
+    id: String(r.id),
+    make: String(r.make ?? ""),
+    kind,
+    series: typeof r.series === "string" ? r.series : "",
+    model: String(r.model ?? ""),
+    year_from: typeof r.year_from === "number" ? r.year_from : null,
+    year_to: typeof r.year_to === "number" ? r.year_to : null,
+    serial_prefixes: Array.isArray(r.serial_prefixes) ? (r.serial_prefixes as string[]) : [],
+    serial_breaks: Array.isArray(r.serial_breaks) ? (r.serial_breaks as Machine["serial_breaks"]) : [],
+    notes: typeof r.notes === "string" ? r.notes : "",
+    sort: typeof r.sort === "number" ? r.sort : 0,
+  };
+}
+
+export async function loadMachines(db: SupabaseClient): Promise<Machine[]> {
+  const m = await db.from(FT.machines).select("*").order("make").order("sort").order("series").order("model");
+  check(m.error);
+  return (m.data ?? []).map(normalizeMachine);
+}
+
 export async function loadMeta(db: SupabaseClient): Promise<CatalogMeta> {
-  const [c, l, p] = await Promise.all([
+  const [c, l, p, machines] = await Promise.all([
     db.from(FT.categories).select("*"),
     db.from("fittings_locations").select("id, name, kind, lead_days, phone").order("name"),
     db.from("fittings_products").select("id, name, part_number, qty, kind").order("sort"),
+    loadMachines(db),
   ]);
   check(c.error);
   check(l.error);
   check(p.error);
   return {
+    machines,
     categories: (c.data ?? []).map(normalizeCategory),
     locations: (l.data ?? []).map((r) => ({
       id: r.id as string,
@@ -105,10 +139,12 @@ const numOrNull = (v: unknown): number | null => {
 };
 
 export async function loadDetails(db: SupabaseClient, id: string): Promise<Details | null> {
-  const [p, x, s, d, k, st] = await Promise.all([
+  const [p, x, s, d, k, st, ft] = await Promise.all([
     db
       .from("fittings_products")
-      .select("category_id, brand, family, variant_label, specs, kind, ship_class, weight_oz, length_in, width_in, height_in, freight_class")
+      .select(
+        "category_id, brand, family, variant_label, specs, kind, ship_class, weight_oz, length_in, width_in, height_in, freight_class, condition, universal, warranty_months, price_mode",
+      )
       .eq("id", id)
       .maybeSingle(),
     db.from(FT.xrefs).select("kind, brand, number, number_norm").eq("product_id", id),
@@ -116,8 +152,12 @@ export async function loadDetails(db: SupabaseClient, id: string): Promise<Detai
     db.from(FT.documents).select("kind, title, url, sort").eq("product_id", id).order("sort"),
     db.from(FT.kits).select("product_id, qty, sort").eq("kit_id", id).order("sort"),
     db.from(FT.stock).select("location_id, qty, counted_at, lead_days").eq("product_id", id),
+    db
+      .from(FT.fitment)
+      .select("machine_id, position, serial_prefix, serial_from, serial_to, engine, qty_used, strength, note")
+      .eq("product_id", id),
   ]);
-  for (const r of [p, x, s, d, k, st]) check(r.error);
+  for (const r of [p, x, s, d, k, st, ft]) check(r.error);
   if (!p.data) return null;
   const row = p.data as Record<string, unknown>;
   return {
@@ -139,6 +179,11 @@ export async function loadDetails(db: SupabaseClient, id: string): Promise<Detai
     documents: ((d.data ?? []) as Array<Details["documents"][number]>).map(({ kind, title, url }) => ({ kind, title, url })),
     kit_items: ((k.data ?? []) as KitItem[]).map(({ product_id, qty }) => ({ product_id, qty })),
     stock: (st.data ?? []) as Details["stock"],
+    condition: (CONDITIONS.find((c) => c.id === row.condition)?.id ?? "new") as Details["condition"],
+    universal: row.universal === true,
+    warranty_months: numOrNull(row.warranty_months),
+    price_mode: row.price_mode === "quote" ? "quote" : "cart",
+    fitment: (ft.data ?? []) as FitRow[],
   };
 }
 
@@ -238,7 +283,54 @@ export function prepareDetails(
     return [{ location_id, qty, lead_days: lead, counted_at: counted }];
   });
 
+  const condition = oneOf(CONDITIONS, raw.condition) ?? "new";
+  const price_mode = oneOf(PRICE_MODES, raw.price_mode) ?? "cart";
+  const universal = raw.universal === true;
+  let warranty_months: number | null = null;
+  if (raw.warranty_months != null && raw.warranty_months !== "") {
+    const w = numOrNull(raw.warranty_months);
+    if (w == null || !Number.isInteger(w) || w < 0 || w > 120) fail("Warranty must be a whole number of months, 0 to 120.");
+    warranty_months = w;
+  }
+
+  const seen = new Set<string>();
+  const fitment: FitRow[] = (Array.isArray(raw.fitment) ? raw.fitment : []).slice(0, 400).flatMap((r) => {
+    const x = r as Record<string, unknown>;
+    const machine_id = text(x.machine_id, 40);
+    if (!machine_id) return [];
+    const m = meta.machines.find((mm) => mm.id === machine_id);
+    if (!m) fail("A machine on the fits list no longer exists. Remove it and save again.");
+    const serial_prefix = numberNorm(text(x.serial_prefix, 8));
+    if (serial_prefix && (serial_prefix.length < 2 || serial_prefix.length > 6)) fail(`"${serial_prefix}" is not a serial prefix.`);
+    if (serial_prefix && m!.serial_prefixes.length && !m!.serial_prefixes.includes(serial_prefix)) {
+      fail(`${m!.make} ${m!.model} has no serial prefix ${serial_prefix}. Add it to the machine first, or fix the typo.`);
+    }
+    const qty = numOrNull(x.qty_used) ?? 1;
+    if (!Number.isInteger(qty) || qty < 1 || qty > 500) fail("Quantity used on a machine must be a whole number, 1 or more.");
+    const row: FitRow = {
+      machine_id,
+      position: text(x.position, 60),
+      serial_prefix,
+      serial_from: text(x.serial_from, 40),
+      serial_to: text(x.serial_to, 40),
+      engine: text(x.engine, 60),
+      qty_used: qty,
+      strength: x.strength === "spec" ? "spec" : "confirmed",
+      note: text(x.note, 200),
+    };
+    const key = [row.machine_id, row.position, row.serial_prefix, row.serial_from].join("|");
+    if (seen.has(key)) return [];
+    seen.add(key);
+    return [row];
+  });
+  if (universal && fitment.length) fail("A universal part fits by spec, so it lists no machines. Untick universal or remove the machines.");
+
   return {
+    condition,
+    price_mode,
+    universal,
+    warranty_months,
+    fitment,
     category_id: category_id ?? "",
     brand: text(raw.brand, 60),
     family: text(raw.family, 80),
@@ -305,4 +397,81 @@ export async function placeByType(db: SupabaseClient, id: string, type: string):
   } catch {
     /* nothing to place yet */
   }
+}
+
+// ---------------------------------------------------------------------------
+// Machines: the lineup the machine picker and fitment rows point at.
+// ---------------------------------------------------------------------------
+
+export { MachineProblem };
+
+/** Machines with how many items list each one, for the admin list. */
+export async function machinesWithUse(db: SupabaseClient): Promise<Array<Machine & { parts: number }>> {
+  const [machines, f] = await Promise.all([loadMachines(db), db.from(FT.fitment).select("machine_id")]);
+  check(f.error);
+  const used = new Map<string, number>();
+  for (const r of f.data ?? []) used.set(r.machine_id as string, (used.get(r.machine_id as string) ?? 0) + 1);
+  return machines.map((m) => ({ ...m, parts: used.get(m.id) ?? 0 }));
+}
+
+const machineRow = (m: ReturnType<typeof cleanMachine>) => ({
+  make: m.make,
+  kind: m.kind,
+  series: m.series,
+  model: m.model,
+  year_from: m.year_from,
+  year_to: m.year_to,
+  serial_prefixes: m.serial_prefixes,
+  serial_breaks: m.serial_breaks,
+  notes: m.notes,
+  sort: m.sort,
+});
+
+function duplicate(error: PgError, m: { make: string; model: string }): void {
+  if (error?.code === "23505") throw new MachineProblem(`${m.make} ${m.model} is already on the list.`);
+  check(error);
+}
+
+export async function saveMachine(db: SupabaseClient, raw: Record<string, unknown>): Promise<Machine> {
+  const m = cleanMachine(raw);
+  const q = m.id
+    ? db.from(FT.machines).update(machineRow(m)).eq("id", m.id).select("*").maybeSingle()
+    : db.from(FT.machines).insert(machineRow(m)).select("*").maybeSingle();
+  const { data, error } = await q;
+  duplicate(error, m);
+  if (!data) throw new MachineProblem("That machine no longer exists.");
+  return normalizeMachine(data as Record<string, unknown>);
+}
+
+/** Adds machines in one go. Ones already on the list (same make and model) are skipped, not changed. */
+export async function addMachines(db: SupabaseClient, list: Array<ReturnType<typeof cleanMachine>>): Promise<{ added: number; skipped: string[] }> {
+  if (!list.length) return { added: 0, skipped: [] };
+  const have = await loadMachines(db);
+  const key = (m: { make: string; model: string }) => `${m.make}|${m.model}`.toLowerCase();
+  const known = new Set(have.map(key));
+  const skipped: string[] = [];
+  const fresh = list.filter((m) => {
+    const k = key(m);
+    if (known.has(k)) {
+      skipped.push(`${m.make} ${m.model}`);
+      return false;
+    }
+    known.add(k);
+    return true;
+  });
+  if (fresh.length) {
+    const { error } = await db.from(FT.machines).insert(fresh.map(machineRow));
+    check(error);
+  }
+  return { added: fresh.length, skipped };
+}
+
+export async function deleteMachine(db: SupabaseClient, id: string): Promise<void> {
+  const used = await db.from(FT.fitment).select("product_id", { count: "exact", head: true }).eq("machine_id", id);
+  check(used.error);
+  if ((used.count ?? 0) > 0) {
+    throw new MachineProblem(`${used.count} item${used.count === 1 ? " lists" : "s list"} this machine. Take it off those items first.`);
+  }
+  const { error } = await db.from(FT.machines).delete().eq("id", id);
+  check(error);
 }

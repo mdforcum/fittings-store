@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { ActionReply, AdminData } from "@/lib/admin-types";
 import Hoses from "./admin/Hoses";
 import Inventory from "./admin/Inventory";
+import Machines from "./admin/Machines";
 import Orders from "./admin/Orders";
 import SettingsTab from "./admin/SettingsTab";
 import SupplierPhotos from "./admin/SupplierPhotos";
@@ -14,10 +15,11 @@ import { Toast, type ToastState } from "./ui";
 export type Act = (action: string, payload?: Record<string, unknown>) => Promise<Record<string, unknown> | null>;
 export type Say = (text: string, bad?: boolean) => void;
 
-type Tab = "inventory" | "orders" | "hoses" | "survey" | "photos" | "settings";
+type Tab = "inventory" | "machines" | "orders" | "hoses" | "survey" | "photos" | "settings";
 
 const TAB_NAMES: Record<Tab, string> = {
   inventory: "Inventory",
+  machines: "Machines",
   orders: "Orders",
   hoses: "Hoses",
   survey: "Survey",
@@ -112,10 +114,11 @@ export default function Admin() {
       </header>
       <main className="wrap">
         {tab === "hoses" && <Hoses say={say} />}
+        {tab === "machines" && <Machines say={say} />}
         {tab === "survey" && <Survey say={say} />}
         {tab === "photos" && <SupplierPhotos say={say} />}
-        {!data && !loadError && tab !== "survey" && tab !== "photos" && <p className="empty">Loading the store…</p>}
-        {loadError && tab !== "survey" && tab !== "photos" && (
+        {!data && !loadError && !["survey", "photos", "machines", "hoses"].includes(tab) && <p className="empty">Loading the store…</p>}
+        {loadError && !["survey", "photos", "machines", "hoses"].includes(tab) && (
           <p className="empty err" role="alert">
             {loadError}
           </p>

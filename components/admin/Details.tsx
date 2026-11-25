@@ -5,7 +5,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { dollars, toCents, type Product } from "@/lib/catalog";
 import {
+  CONDITIONS,
   DOC_KINDS,
+  MACHINE_KINDS,
+  PRICE_MODES,
   EMPTY_DETAILS,
   FREIGHT_CLASSES,
   PRODUCT_KINDS,
@@ -17,6 +20,7 @@ import {
   flatTree,
   inherited,
   kitAvailable,
+  machineLabel,
   numberNorm,
   shippingGaps,
   specFieldsFor,
@@ -37,7 +41,8 @@ type Load =
   | { state: "ready"; meta: CatalogMeta };
 
 /** Rows as typed: numbers stay text until save, so a half-typed "12." is not lost. */
-type Draft = Omit<Details, "weight_oz" | "length_in" | "width_in" | "height_in" | "surcharges" | "stock" | "kit_items"> & {
+type Draft = Omit<Details, "weight_oz" | "length_in" | "width_in" | "height_in" | "surcharges" | "stock" | "kit_items" | "warranty_months"> & {
+  warranty: string;
   weight_lb: string;
   length_in: string;
   width_in: string;
@@ -56,8 +61,10 @@ function toDraft(d: Details): Draft {
   for (const s of d.stock) {
     stock[s.location_id] = { qty: String(s.qty), lead_days: num(s.lead_days), counted_at: s.counted_at, touched: false };
   }
+  const { warranty_months, ...rest } = d;
   return {
-    ...d,
+    ...rest,
+    warranty: num(warranty_months),
     weight_lb: d.weight_oz == null ? "" : String(Math.round((d.weight_oz / 16) * 100) / 100),
     length_in: num(d.length_in),
     width_in: num(d.width_in),
@@ -90,6 +97,11 @@ function fromDraft(f: Draft): Record<string, unknown> {
       .filter((s) => s.amount_cents != null && !Number.isNaN(s.amount_cents) && s.amount_cents > 0),
     documents: f.documents.filter((d) => d.url.trim()),
     kit_items: f.kind === "kit" ? f.kit_items.filter((k) => k.product_id).map((k) => ({ product_id: k.product_id, qty: Number(k.qty) })) : [],
+    condition: f.condition,
+    universal: f.universal,
+    warranty_months: n(f.warranty),
+    price_mode: f.price_mode,
+    fitment: f.universal ? [] : f.fitment.filter((r) => r.machine_id),
     stock: Object.entries(f.stock)
       .filter(([, s]) => s.qty.trim() !== "")
       .map(([location_id, s]) => ({
@@ -292,7 +304,45 @@ export default function DetailsEditor({
               </label>
             </div>
             <p className="hint">Items with the same &ldquo;sold in sizes as&rdquo; name share one page in the shop, with a size picker.</p>
+            <div className="two">
+              <label htmlFor="d-cond">
+                Condition
+                <select id="d-cond" value={f.condition} onChange={(e) => set("condition", e.target.value as Draft["condition"])}>
+                  {CONDITIONS.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label htmlFor="d-warranty">
+                Warranty (months)
+                <input
+                  id="d-warranty"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  placeholder="None stated"
+                  value={f.warranty}
+                  onChange={(e) => set("warranty", e.target.value)}
+                />
+              </label>
+            </div>
+            <label htmlFor="d-pmode">
+              How it sells
+              <select id="d-pmode" value={f.price_mode} onChange={(e) => set("price_mode", e.target.value as Draft["price_mode"])}>
+                {PRICE_MODES.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {f.price_mode === "quote" && (
+              <p className="hint">Big components (final drives, swing motors, engines) usually sell this way. Requests land in the back office.</p>
+            )}
           </section>
+
+          <FitSection f={f} set={set} meta={meta} />
 
           {fields.length > 0 && (
             <section>
@@ -630,5 +680,105 @@ function SpecInput({
       />
       {field.note && <small className="hint">{field.note}</small>}
     </label>
+  );
+}
+
+const STRENGTHS = [
+  { id: "confirmed", label: "Fits (parts data)" },
+  { id: "spec", label: "Meets its spec" },
+] as const;
+
+function FitSection({
+  f,
+  set,
+  meta,
+}: {
+  f: Draft;
+  set: <K extends keyof Draft>(key: K, value: Draft[K]) => void;
+  meta: CatalogMeta;
+}) {
+  const rows = f.fitment;
+  const put = (i: number, patch: Partial<Draft["fitment"][number]>) => set("fitment", rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  const groups = MACHINE_KINDS.map((k) => ({ ...k, machines: meta.machines.filter((m) => m.kind === k.id) })).filter((g) => g.machines.length);
+  return (
+    <section>
+      <h3>Fits these machines</h3>
+      <label className="det-check" htmlFor="d-universal">
+        <input id="d-universal" type="checkbox" checked={f.universal} onChange={(e) => set("universal", e.target.checked)} />
+        Universal: fits by spec (a bearing, a light, a pin), not by model
+      </label>
+      {f.universal ? (
+        <p className="hint">Universal parts show &ldquo;fits most machines&rdquo; with the specs that decide fit, and skip the machine check.</p>
+      ) : meta.machines.length === 0 ? (
+        <p className="hint">No machines yet. Add the lineup on the Machines tab, then list here which ones this part fits.</p>
+      ) : (
+        <>
+          <p className="hint">
+            Leave the serial range empty when it fits every serial. Cat machines go by a three-character prefix plus the number
+            after it, for example prefix ABC, 1 to 4999.
+          </p>
+          {rows.map((r, i) => {
+            const m = meta.machines.find((mm) => mm.id === r.machine_id);
+            return (
+              <div className="det-fit" key={i}>
+                <div className="det-fit-top">
+                  <select aria-label="Machine" value={r.machine_id} onChange={(e) => put(i, { machine_id: e.target.value, serial_prefix: "" })}>
+                    <option value="">Pick a machine</option>
+                    {groups.map((g) => (
+                      <optgroup key={g.id} label={g.label}>
+                        {g.machines.map((mm) => (
+                          <option key={mm.id} value={mm.id}>
+                            {machineLabel(mm)}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                  <select aria-label="How sure" value={r.strength} onChange={(e) => put(i, { strength: e.target.value as "confirmed" | "spec" })}>
+                    {STRENGTHS.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.label}
+                      </option>
+                    ))}
+                  </select>
+                  <button type="button" className="x" aria-label="Remove machine" onClick={() => set("fitment", rows.filter((_, j) => j !== i))}>
+                    ×
+                  </button>
+                </div>
+                <div className="det-fit-serial">
+                  {m && m.serial_prefixes.length > 0 ? (
+                    <select aria-label="Serial prefix" value={r.serial_prefix} onChange={(e) => put(i, { serial_prefix: e.target.value })}>
+                      <option value="">Any prefix</option>
+                      {m.serial_prefixes.map((p) => (
+                        <option key={p} value={p}>
+                          {p}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input aria-label="Serial prefix" placeholder="Prefix" maxLength={6} value={r.serial_prefix} onChange={(e) => put(i, { serial_prefix: e.target.value.toUpperCase() })} />
+                  )}
+                  <input aria-label="Serial from" placeholder="Serial from" maxLength={40} value={r.serial_from} onChange={(e) => put(i, { serial_from: e.target.value })} />
+                  <input aria-label="Serial to" placeholder="Serial to" maxLength={40} value={r.serial_to} onChange={(e) => put(i, { serial_to: e.target.value })} />
+                  <input aria-label="Where on the machine" placeholder="Position" maxLength={60} value={r.position} onChange={(e) => put(i, { position: e.target.value })} />
+                </div>
+              </div>
+            );
+          })}
+          <button
+            type="button"
+            className="btn ghost sm"
+            onClick={() =>
+              set("fitment", [
+                ...rows,
+                { machine_id: "", position: "", serial_prefix: "", serial_from: "", serial_to: "", engine: "", qty_used: 1, strength: "confirmed", note: "" },
+              ])
+            }
+          >
+            Add a machine
+          </button>
+        </>
+      )}
+    </section>
   );
 }

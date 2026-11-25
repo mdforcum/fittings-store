@@ -486,6 +486,10 @@ begin
     width_in      = case when d ? 'width_in' then (d->>'width_in')::numeric else width_in end,
     height_in     = case when d ? 'height_in' then (d->>'height_in')::numeric else height_in end,
     freight_class = coalesce(d->>'freight_class', freight_class),
+    condition     = coalesce(d->>'condition', condition),
+    universal     = coalesce((d->>'universal')::boolean, universal),
+    warranty_months = case when d ? 'warranty_months' then (d->>'warranty_months')::integer else warranty_months end,
+    price_mode    = coalesce(d->>'price_mode', price_mode),
     updated_at    = now()
   where id = p_id;
 
@@ -520,6 +524,16 @@ begin
       from jsonb_array_elements(d->'kit_items') with ordinality as t(x, ord);
   end if;
 
+  if d ? 'fitment' then
+    delete from fittings_fitment where product_id = p_id;
+    insert into fittings_fitment (product_id, machine_id, position, serial_prefix, serial_from, serial_to, engine, qty_used, strength, note)
+      select distinct on (x->>'machine_id', coalesce(x->>'position', ''), coalesce(x->>'serial_prefix', ''), coalesce(x->>'serial_from', ''))
+        p_id, (x->>'machine_id')::uuid, coalesce(x->>'position', ''), coalesce(x->>'serial_prefix', ''),
+        coalesce(x->>'serial_from', ''), coalesce(x->>'serial_to', ''), coalesce(x->>'engine', ''),
+        coalesce((x->>'qty_used')::integer, 1), coalesce(x->>'strength', 'confirmed'), coalesce(x->>'note', '')
+      from jsonb_array_elements(d->'fitment') x;
+  end if;
+
   if d ? 'stock' then
     delete from fittings_stock where product_id = p_id;
     insert into fittings_stock (product_id, location_id, qty, counted_at, lead_days)
@@ -537,7 +551,45 @@ grant execute on function public.fittings_save_details(text, jsonb) to service_r
 -- order and spec templates, but never switches a category on or off.
 insert into public.fittings_categories (id, parent_id, name, sort, spec_fields, fitment, default_ship, live, note)
 values
-  ('hydraulics', null, 'Hydraulics', 10, '[]'::jsonb, 'size', 'parcel', true, ''),
+  -- Six departments. Every part sits in one place; the machine it fits, its
+  -- condition and its brand are filters, never extra branches.
+  ('machine-systems', null, 'Machine systems', 10, '[]'::jsonb, 'part_number', 'parcel', false, 'Parts every tractor and machine has: engine to cab. Filtered by machine.'),
+  ('implements', null, 'Implements', 20, '[]'::jsonb, 'part_number', 'parcel', false, ''),
+  ('construction', null, 'Construction equipment', 30, '[]'::jsonb, 'part_number', 'freight', false, 'Components only equipment has. Big components are usually sold by quote.'),
+  ('hydraulics', null, 'Hydraulics', 40, '[]'::jsonb, 'size', 'parcel', true, ''),
+  ('universal', null, 'Universal parts and shop', 50, '[]'::jsonb, 'spec', 'parcel', false, 'Fits by spec rather than by model.'),
+  ('tires', null, 'Tires and wheels', 60, '[]'::jsonb, null, 'freight', false, 'Tires are sold and mounted through a partner tire service.'),
+  ('tire-types', 'tires', 'Tires', 10, '[{"key": "tire_size", "label": "Size", "type": "text", "filter": "search"}, {"key": "rim_in", "label": "Rim diameter", "type": "number", "filter": "list", "unit": "in"}, {"key": "construction", "label": "Construction", "type": "choice", "filter": "chips", "choices": ["Radial", "Bias", "IF", "VF"]}, {"key": "tread", "label": "Tread type", "type": "choice", "filter": "chips", "choices": ["R-1", "R-1W", "R-2", "R-3", "R-4", "F-1", "F-2", "F-3", "I-1", "I-3"]}, {"key": "load", "label": "Load index, speed or ply", "type": "text", "filter": "list"}, {"key": "tube", "label": "Tube", "type": "choice", "filter": "chips", "choices": ["Tubeless (TL)", "Tube type (TT)"]}, {"key": "rci", "label": "Rolling circumference index", "type": "number", "filter": "none"}]'::jsonb, 'size', 'freight', false, 'Sold and mounted through a partner tire service.'),
+  ('ms-engine', 'machine-systems', 'Engine', 10, '[]'::jsonb, null, null, false, ''),
+  ('ms-cooling', 'machine-systems', 'Cooling', 20, '[]'::jsonb, null, null, false, ''),
+  ('ms-fuel-exhaust', 'machine-systems', 'Fuel, air intake and exhaust', 30, '[]'::jsonb, null, null, false, ''),
+  ('ms-electrical', 'machine-systems', 'Electrical and starting', 40, '[]'::jsonb, null, null, false, ''),
+  ('ms-clutch-pto', 'machine-systems', 'Clutch and PTO', 60, '[]'::jsonb, null, null, false, ''),
+  ('ms-transmission', 'machine-systems', 'Transmission, axles and differentials', 70, '[]'::jsonb, null, null, false, ''),
+  ('ms-steering', 'machine-systems', 'Front axle and steering', 80, '[]'::jsonb, null, null, false, ''),
+  ('ms-brakes-hitch', 'machine-systems', 'Brakes, hitch and 3-point', 90, '[]'::jsonb, null, null, false, ''),
+  ('ms-cab', 'machine-systems', 'Cab, A/C and controls', 100, '[]'::jsonb, null, null, false, ''),
+  ('ms-sheet-metal', 'machine-systems', 'Sheet metal, decals and paint', 110, '[]'::jsonb, null, 'freight', false, ''),
+  ('impl-combine', 'implements', 'Combine and header', 10, '[]'::jsonb, null, null, false, ''),
+  ('impl-hay', 'implements', 'Hay and forage', 20, '[]'::jsonb, null, null, false, ''),
+  ('impl-planter', 'implements', 'Planter and drill', 30, '[]'::jsonb, null, null, false, ''),
+  ('impl-tillage', 'implements', 'Tillage', 40, '[]'::jsonb, null, null, false, ''),
+  ('impl-sprayer', 'implements', 'Sprayer', 50, '[]'::jsonb, null, null, false, ''),
+  ('ce-undercarriage', 'construction', 'Undercarriage', 10, '[]'::jsonb, null, null, false, 'Track chains, shoes, rollers, idlers, sprockets.'),
+  ('ce-final-drives', 'construction', 'Final drives and travel motors', 20, '[]'::jsonb, null, null, false, ''),
+  ('ce-swing', 'construction', 'Swing motors and slewing rings', 30, '[]'::jsonb, null, null, false, ''),
+  ('ce-attachments', 'construction', 'Buckets, couplers and thumbs', 40, '[]'::jsonb, null, null, false, ''),
+  ('ce-ground-engaging', 'construction', 'Teeth and cutting edges', 50, '[]'::jsonb, null, null, false, ''),
+  ('hyd-hose', 'hydraulics', 'Hose and hose builds', 20, '[]'::jsonb, null, null, false, ''),
+  ('hyd-couplers', 'hydraulics', 'Quick couplers', 30, '[]'::jsonb, null, null, false, ''),
+  ('hyd-cylinders', 'hydraulics', 'Cylinders and seal kits', 40, '[]'::jsonb, 'part_number', null, false, ''),
+  ('hyd-pumps-valves', 'hydraulics', 'Pumps, valves and motors', 50, '[]'::jsonb, 'part_number', null, false, ''),
+  ('uni-bearings', 'universal', 'Bearings and seals', 10, '[]'::jsonb, null, null, false, ''),
+  ('uni-chain', 'universal', 'Chain and sprockets', 30, '[]'::jsonb, null, null, false, ''),
+  ('uni-lighting', 'universal', 'Lights', 40, '[]'::jsonb, null, null, false, ''),
+  ('uni-seats', 'universal', 'Seats', 50, '[]'::jsonb, null, 'freight', false, ''),
+  ('uni-pto', 'universal', 'PTO shafts and parts', 60, '[]'::jsonb, null, null, false, ''),
+  ('uni-hardware', 'universal', 'Hardware, pins and fasteners', 70, '[]'::jsonb, null, null, false, ''),
   ('hydraulic-fittings', 'hydraulics', 'Fittings and adapters', 10, '[{"key": "size", "label": "Nominal size", "type": "text", "filter": "list", "column": "size"}, {"key": "dash", "label": "Dash size", "type": "text", "filter": "list", "column": "dash"}, {"key": "thread", "label": "Thread", "type": "text", "filter": "list", "column": "thread"}]'::jsonb, null, null, true, ''),
   ('orb-plugs', 'hydraulic-fittings', 'O-ring boss plugs', 10, '[]'::jsonb, null, null, true, ''),
   ('jic-caps', 'hydraulic-fittings', '37° JIC caps', 20, '[]'::jsonb, null, null, true, ''),
@@ -545,14 +597,14 @@ values
   ('breather-plugs', 'hydraulic-fittings', 'Breather plugs', 40, '[]'::jsonb, null, null, true, ''),
   ('adapters', 'hydraulic-fittings', 'Adapters', 50, '[]'::jsonb, null, null, true, ''),
   ('other-fittings', 'hydraulic-fittings', 'Other fittings', 60, '[]'::jsonb, null, null, true, ''),
-  ('filters', null, 'Filters', 20, '[{"key": "style", "label": "Style", "type": "choice", "filter": "chips", "choices": ["Spin-on", "Element", "Cartridge"]}, {"key": "thread_size", "label": "Thread size", "type": "text", "filter": "list"}, {"key": "od_in", "label": "Outside diameter", "type": "number", "filter": "range", "unit": "in"}, {"key": "length_in", "label": "Length", "type": "number", "filter": "range", "unit": "in"}, {"key": "gasket", "label": "Gasket", "type": "text", "filter": "list"}, {"key": "micron", "label": "Micron rating", "type": "number", "filter": "range", "unit": "µm"}, {"key": "micron_basis", "label": "Micron basis", "type": "choice", "filter": "chips", "choices": ["Nominal", "Absolute"]}, {"key": "bypass_psid", "label": "Bypass valve", "type": "text", "filter": "list"}, {"key": "anti_drainback", "label": "Anti-drainback valve", "type": "bool", "filter": "toggle"}, {"key": "media", "label": "Media", "type": "choice", "filter": "chips", "choices": ["Cellulose", "Synthetic", "Blend"]}]'::jsonb, 'part_number', 'parcel', false, ''),
+  ('filters', 'machine-systems', 'Filters', 50, '[{"key": "style", "label": "Style", "type": "choice", "filter": "chips", "choices": ["Spin-on", "Element", "Cartridge"]}, {"key": "thread_size", "label": "Thread size", "type": "text", "filter": "list"}, {"key": "od_in", "label": "Outside diameter", "type": "number", "filter": "range", "unit": "in"}, {"key": "length_in", "label": "Length", "type": "number", "filter": "range", "unit": "in"}, {"key": "gasket", "label": "Gasket", "type": "text", "filter": "list"}, {"key": "micron", "label": "Micron rating", "type": "number", "filter": "range", "unit": "µm"}, {"key": "micron_basis", "label": "Micron basis", "type": "choice", "filter": "chips", "choices": ["Nominal", "Absolute"]}, {"key": "bypass_psid", "label": "Bypass valve", "type": "text", "filter": "list"}, {"key": "anti_drainback", "label": "Anti-drainback valve", "type": "bool", "filter": "toggle"}, {"key": "media", "label": "Media", "type": "choice", "filter": "chips", "choices": ["Cellulose", "Synthetic", "Blend"]}]'::jsonb, 'part_number', 'parcel', false, ''),
   ('filters-engine-oil', 'filters', 'Engine oil', 10, '[]'::jsonb, null, null, false, ''),
   ('filters-fuel', 'filters', 'Fuel', 20, '[]'::jsonb, null, null, false, ''),
   ('filters-air', 'filters', 'Air', 30, '[]'::jsonb, null, null, false, ''),
   ('filters-hydraulic', 'filters', 'Hydraulic and transmission', 40, '[]'::jsonb, null, null, false, ''),
   ('filters-coolant', 'filters', 'Coolant', 50, '[]'::jsonb, null, null, false, ''),
   ('filters-breather-def', 'filters', 'Crankcase breather and DEF', 60, '[]'::jsonb, null, null, false, ''),
-  ('lubricants', null, 'Lubricants and fluids', 30, '[{"key": "viscosity", "label": "Viscosity grade", "type": "text", "filter": "list"}, {"key": "specs_met", "label": "Specs met", "type": "multi", "filter": "list"}, {"key": "claim", "label": "Claim strength", "type": "choice", "filter": "chips", "choices": ["OEM product", "OEM licensed", "Meets spec (maker’s claim)"]}, {"key": "base", "label": "Base", "type": "choice", "filter": "chips", "choices": ["Conventional", "Synthetic blend", "Full synthetic"]}, {"key": "nlgi", "label": "Grease grade", "type": "text", "filter": "list"}, {"key": "thickener", "label": "Grease thickener", "type": "text", "filter": "list"}, {"key": "coolant_type", "label": "Coolant type", "type": "choice", "filter": "chips", "choices": ["Conventional", "Extended life (OAT)", "Hybrid (HOAT)"]}, {"key": "mix", "label": "Mix", "type": "choice", "filter": "chips", "choices": ["Concentrate", "50/50 premix"]}]'::jsonb, 'spec', 'parcel', false, 'Container sizes are variants: one family, one item per container.'),
+  ('lubricants', 'universal', 'Lubricants and fluids', 80, '[{"key": "viscosity", "label": "Viscosity grade", "type": "text", "filter": "list"}, {"key": "specs_met", "label": "Specs met", "type": "multi", "filter": "list"}, {"key": "claim", "label": "Claim strength", "type": "choice", "filter": "chips", "choices": ["OEM product", "OEM licensed", "Meets spec (maker’s claim)"]}, {"key": "base", "label": "Base", "type": "choice", "filter": "chips", "choices": ["Conventional", "Synthetic blend", "Full synthetic"]}, {"key": "nlgi", "label": "Grease grade", "type": "text", "filter": "list"}, {"key": "thickener", "label": "Grease thickener", "type": "text", "filter": "list"}, {"key": "coolant_type", "label": "Coolant type", "type": "choice", "filter": "chips", "choices": ["Conventional", "Extended life (OAT)", "Hybrid (HOAT)"]}, {"key": "mix", "label": "Mix", "type": "choice", "filter": "chips", "choices": ["Concentrate", "50/50 premix"]}]'::jsonb, 'spec', 'parcel', false, 'Container sizes are variants: one family, one item per container.'),
   ('lube-engine-oil', 'lubricants', 'Engine oil', 10, '[]'::jsonb, null, null, false, ''),
   ('lube-tractor-fluid', 'lubricants', 'Transmission and hydraulic (tractor fluid)', 20, '[]'::jsonb, null, null, false, ''),
   ('lube-hydraulic', 'lubricants', 'Hydraulic oil', 30, '[]'::jsonb, null, null, false, ''),
@@ -560,22 +612,23 @@ values
   ('lube-grease', 'lubricants', 'Grease', 50, '[]'::jsonb, null, null, false, ''),
   ('lube-coolant', 'lubricants', 'Coolant and antifreeze', 60, '[]'::jsonb, null, null, false, ''),
   ('lube-def', 'lubricants', 'Diesel exhaust fluid (DEF)', 70, '[]'::jsonb, null, null, false, ''),
-  ('belts', null, 'Belts', 40, '[{"key": "belt_type", "label": "Belt type", "type": "choice", "filter": "chips", "choices": ["Classical", "Narrow", "Banded", "V-ribbed", "Variable speed"]}, {"key": "cross_section", "label": "Cross section", "type": "text", "filter": "list"}, {"key": "length_in", "label": "Length", "type": "number", "filter": "range", "unit": "in"}, {"key": "length_type", "label": "Length measured as", "type": "choice", "filter": "chips", "choices": ["Outside", "Effective", "Pitch"]}, {"key": "top_width", "label": "Top width", "type": "text", "filter": "list"}, {"key": "bands_ribs", "label": "Bands or ribs", "type": "number", "filter": "list"}, {"key": "construction", "label": "Construction", "type": "choice", "filter": "chips", "choices": ["Wrapped", "Raw-edge cogged", "Aramid cord"]}]'::jsonb, 'part_number', 'parcel', false, ''),
+  ('belts', 'universal', 'Belts', 20, '[{"key": "belt_type", "label": "Belt type", "type": "choice", "filter": "chips", "choices": ["Classical", "Narrow", "Banded", "V-ribbed", "Variable speed"]}, {"key": "cross_section", "label": "Cross section", "type": "text", "filter": "list"}, {"key": "length_in", "label": "Length", "type": "number", "filter": "range", "unit": "in"}, {"key": "length_type", "label": "Length measured as", "type": "choice", "filter": "chips", "choices": ["Outside", "Effective", "Pitch"]}, {"key": "top_width", "label": "Top width", "type": "text", "filter": "list"}, {"key": "bands_ribs", "label": "Bands or ribs", "type": "number", "filter": "list"}, {"key": "construction", "label": "Construction", "type": "choice", "filter": "chips", "choices": ["Wrapped", "Raw-edge cogged", "Aramid cord"]}]'::jsonb, 'part_number', 'parcel', false, ''),
   ('belts-classical', 'belts', 'Classical V-belts', 10, '[]'::jsonb, null, null, false, ''),
   ('belts-narrow', 'belts', 'Narrow V-belts', 20, '[]'::jsonb, null, null, false, ''),
   ('belts-banded', 'belts', 'Banded belts', 30, '[]'::jsonb, null, null, false, ''),
   ('belts-ribbed', 'belts', 'V-ribbed belts', 40, '[]'::jsonb, null, null, false, ''),
   ('belts-variable-speed', 'belts', 'Variable-speed belts', 50, '[]'::jsonb, null, null, false, ''),
   ('belts-ag', 'belts', 'Agricultural belts (ASABE S211)', 60, '[]'::jsonb, null, null, false, ''),
-  ('tires', null, 'Tires', 50, '[{"key": "tire_size", "label": "Size", "type": "text", "filter": "search"}, {"key": "rim_in", "label": "Rim diameter", "type": "number", "filter": "list", "unit": "in"}, {"key": "construction", "label": "Construction", "type": "choice", "filter": "chips", "choices": ["Radial", "Bias", "IF", "VF"]}, {"key": "tread", "label": "Tread type", "type": "choice", "filter": "chips", "choices": ["R-1", "R-1W", "R-2", "R-3", "R-4", "F-1", "F-2", "F-3", "I-1", "I-3"]}, {"key": "load", "label": "Load index, speed or ply", "type": "text", "filter": "list"}, {"key": "tube", "label": "Tube", "type": "choice", "filter": "chips", "choices": ["Tubeless (TL)", "Tube type (TT)"]}, {"key": "rci", "label": "Rolling circumference index", "type": "number", "filter": "none"}]'::jsonb, 'size', 'freight', false, 'Sold and mounted through a partner tire service.'),
-  ('tires-drive', 'tires', 'Tractor drive (rear)', 10, '[]'::jsonb, null, null, false, ''),
-  ('tires-steer', 'tires', 'Tractor steer (front)', 20, '[]'::jsonb, null, null, false, ''),
-  ('tires-implement', 'tires', 'Implement and wagon', 30, '[]'::jsonb, null, null, false, ''),
-  ('tires-combine-sprayer', 'tires', 'Combine and sprayer', 40, '[]'::jsonb, null, null, false, ''),
-  ('tires-skid-steer', 'tires', 'Skid steer and loader', 50, '[]'::jsonb, null, null, false, ''),
-  ('tires-turf', 'tires', 'Turf and compact', 60, '[]'::jsonb, null, null, false, ''),
-  ('tires-tubes-ballast', 'tires', 'Tubes, valve stems, and ballast', 70, '[]'::jsonb, null, 'parcel', false, ''),
-  ('shop-supplies', null, 'Shop supplies, safety, and cleaning', 60, '[]'::jsonb, 'none', 'parcel', false, ''),
+  ('tires-drive', 'tire-types', 'Tractor drive (rear)', 10, '[]'::jsonb, null, null, false, ''),
+  ('tires-steer', 'tire-types', 'Tractor steer (front)', 20, '[]'::jsonb, null, null, false, ''),
+  ('tires-implement', 'tire-types', 'Implement and wagon', 30, '[]'::jsonb, null, null, false, ''),
+  ('tires-combine-sprayer', 'tire-types', 'Combine and sprayer', 40, '[]'::jsonb, null, null, false, ''),
+  ('tires-skid-steer', 'tire-types', 'Skid steer and loader', 50, '[]'::jsonb, null, null, false, ''),
+  ('tires-turf', 'tire-types', 'Turf and compact', 60, '[]'::jsonb, null, null, false, ''),
+  ('tires-tubes-ballast', 'tire-types', 'Tubes, valve stems, and ballast', 70, '[]'::jsonb, null, 'parcel', false, ''),
+  ('tires-wheels', 'tires', 'Wheels and rims', 80, '[]'::jsonb, 'part_number', null, false, ''),
+  ('tires-weights', 'tires', 'Weights', 90, '[]'::jsonb, 'part_number', null, false, ''),
+  ('shop-supplies', 'universal', 'Shop supplies, safety, and cleaning', 90, '[]'::jsonb, 'none', 'parcel', false, ''),
   ('shop-safety', 'shop-supplies', 'Safety and PPE', 10, '[]'::jsonb, null, null, false, ''),
   ('ppe-gloves', 'shop-safety', 'Gloves', 10, '[{"key": "glove_size", "label": "Size", "type": "choice", "filter": "chips", "choices": ["S", "M", "L", "XL", "2XL", "3XL"]}, {"key": "material", "label": "Material", "type": "text", "filter": "list"}, {"key": "cut_level", "label": "Cut level", "type": "choice", "filter": "chips", "choices": ["A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8", "A9"]}, {"key": "cut_standard", "label": "Cut rating standard", "type": "text", "filter": "list", "note": "ANSI/ISEA 105 edition the rating was tested to"}, {"key": "coating", "label": "Coating", "type": "text", "filter": "list"}, {"key": "pack_count", "label": "Pack count", "type": "number", "filter": "list"}]'::jsonb, null, null, false, ''),
   ('ppe-eyewear', 'shop-safety', 'Eye protection', 20, '[{"key": "z87", "label": "ANSI Z87.1 rating", "type": "choice", "filter": "chips", "choices": ["Z87", "Z87+"]}, {"key": "tint", "label": "Lens tint", "type": "choice", "filter": "chips", "choices": ["Clear", "Gray", "Amber", "Mirror", "Shade 3", "Shade 5"]}, {"key": "otg", "label": "Fits over glasses", "type": "bool", "filter": "toggle"}]'::jsonb, null, null, false, ''),
@@ -587,7 +640,7 @@ values
   ('shop-absorbents', 'shop-supplies', 'Absorbents and spill control', 30, '[{"key": "absorbs", "label": "Absorbs", "type": "choice", "filter": "chips", "choices": ["Oil only", "Universal", "Hazmat"]}, {"key": "capacity", "label": "Capacity", "type": "text", "filter": "list"}]'::jsonb, null, null, false, ''),
   ('shop-sprays', 'shop-supplies', 'Chemical sprays', 40, '[{"key": "use", "label": "Use", "type": "text", "filter": "list"}, {"key": "container", "label": "Container size", "type": "text", "filter": "list"}, {"key": "form", "label": "Form", "type": "choice", "filter": "chips", "choices": ["Aerosol", "Liquid", "Gel", "Powder"]}, {"key": "solvent", "label": "Base", "type": "choice", "filter": "chips", "choices": ["Water based", "Solvent based"]}]'::jsonb, null, null, false, ''),
   ('shop-consumables', 'shop-supplies', 'Shop consumables', 50, '[{"key": "item_size", "label": "Size", "type": "text", "filter": "list"}, {"key": "pack_count", "label": "Pack count", "type": "number", "filter": "list"}]'::jsonb, null, null, false, ''),
-  ('cab-glass', null, 'Cab glass and clear panels', 70, '[{"key": "position", "label": "Position", "type": "choice", "filter": "chips", "choices": ["Windshield", "Front door", "Door", "Left side", "Right side", "Rear", "Roof"]}, {"key": "material", "label": "Material", "type": "choice", "filter": "chips", "choices": ["Tempered glass", "Laminated glass", "Polycarbonate"]}, {"key": "coating", "label": "Coating", "type": "choice", "filter": "chips", "choices": ["Hard-coated both sides", "Hard-coated one side", "None"]}, {"key": "thickness", "label": "Thickness", "type": "text", "filter": "list"}, {"key": "tint", "label": "Tint", "type": "choice", "filter": "chips", "choices": ["Clear", "Green", "Gray", "Bronze"]}, {"key": "holes_hardware", "label": "Holes and hardware", "type": "text", "filter": "none"}, {"key": "frame", "label": "Fits frame", "type": "text", "filter": "none"}]'::jsonb, 'part_number', 'freight', false, ''),
+  ('cab-glass', 'ms-cab', 'Cab glass and clear panels', 10, '[{"key": "position", "label": "Position", "type": "choice", "filter": "chips", "choices": ["Windshield", "Front door", "Door", "Left side", "Right side", "Rear", "Roof"]}, {"key": "material", "label": "Material", "type": "choice", "filter": "chips", "choices": ["Tempered glass", "Laminated glass", "Polycarbonate"]}, {"key": "coating", "label": "Coating", "type": "choice", "filter": "chips", "choices": ["Hard-coated both sides", "Hard-coated one side", "None"]}, {"key": "thickness", "label": "Thickness", "type": "text", "filter": "list"}, {"key": "tint", "label": "Tint", "type": "choice", "filter": "chips", "choices": ["Clear", "Green", "Gray", "Bronze"]}, {"key": "holes_hardware", "label": "Holes and hardware", "type": "text", "filter": "none"}, {"key": "frame", "label": "Fits frame", "type": "text", "filter": "none"}]'::jsonb, 'part_number', 'freight', false, ''),
   ('glass-tractor-combine', 'cab-glass', 'Tractor and combine cab glass', 10, '[]'::jsonb, null, null, false, ''),
   ('glass-skid-steer', 'cab-glass', 'Skid steer and track loader doors', 20, '[]'::jsonb, null, null, false, ''),
   ('glass-excavator-backhoe', 'cab-glass', 'Excavator and backhoe glass', 30, '[]'::jsonb, null, null, false, ''),
@@ -658,3 +711,126 @@ alter table public.fittings_hose_builds enable row level security;
 alter table public.fittings_hose_requests enable row level security;
 revoke all on public.fittings_hose_builds, public.fittings_hose_requests from anon, authenticated;
 grant all on public.fittings_hose_builds, public.fittings_hose_requests to service_role;
+
+
+-- ---------------------------------------------------------------------------
+-- Catalog foundation, part 2 (2026-11-25): what the leading parts sites taught
+-- us. See "Parts Catalog Plan: What the Best Parts Sites Do".
+--   condition, universal, warranty, price mode   on each product
+--   machine kinds, serial prefixes and breaks    on each machine (Cat goes by prefix)
+--   exploded diagrams                            empty until content is licensed
+--   quote requests                               big components and pasted lists
+--   trigram search on numbers and names          "86-572263" finds "86572263"
+-- ---------------------------------------------------------------------------
+
+alter table public.fittings_products
+  add column if not exists condition text not null default 'new',
+  add column if not exists universal boolean not null default false,
+  add column if not exists warranty_months integer,
+  add column if not exists price_mode text not null default 'cart',
+  -- Filled only from a supplier or OEM feed, never typed by hand.
+  add column if not exists oem_list_price_cents integer;
+
+do $$ begin
+  alter table public.fittings_products add constraint fittings_products_condition_chk
+    check (condition in ('new','reman','rebuilt','used','surplus'));
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table public.fittings_products add constraint fittings_products_price_mode_chk
+    check (price_mode in ('cart','quote'));
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table public.fittings_products add constraint fittings_products_warranty_chk
+    check ((warranty_months is null or warranty_months between 0 and 120)
+       and (oem_list_price_cents is null or oem_list_price_cents >= 0));
+exception when duplicate_object then null; end $$;
+
+alter table public.fittings_machines
+  -- Cat names a machine by a three-character serial prefix plus a number range.
+  add column if not exists serial_prefixes text[] not null default '{}',
+  -- [{serial, note}]: where the maker changed parts partway through a model.
+  add column if not exists serial_breaks jsonb not null default '[]'::jsonb,
+  add column if not exists sort integer not null default 0;
+
+do $$ begin
+  alter table public.fittings_machines add constraint fittings_machines_kind_chk
+    check (kind in ('tractor','combine','header','hay','planter','tillage','sprayer',
+                    'backhoe','excavator','dozer','wheel-loader','skid-steer','track-loader','articulated-truck','other'));
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table public.fittings_machines add constraint fittings_machines_breaks_chk
+    check (jsonb_typeof(serial_breaks) = 'array' and (year_from is null or year_to is null or year_from <= year_to));
+exception when duplicate_object then null; end $$;
+create index if not exists fittings_machines_make_idx on public.fittings_machines(make, kind, series);
+
+alter table public.fittings_fitment
+  add column if not exists serial_prefix text not null default '';
+alter table public.fittings_fitment
+  drop constraint if exists fittings_fitment_product_id_machine_id_position_serial_from_key;
+do $$ begin
+  alter table public.fittings_fitment add constraint fittings_fitment_one_row
+    unique (product_id, machine_id, position, serial_prefix, serial_from);
+exception when duplicate_object or duplicate_table then null; end $$;
+create index if not exists fittings_fitment_product_idx on public.fittings_fitment(product_id);
+
+create table if not exists public.fittings_diagrams (
+  id uuid primary key default gen_random_uuid(),
+  machine_id uuid not null references public.fittings_machines(id) on delete cascade,
+  section text not null,
+  title text not null,
+  image_url text not null default '' check (image_url = '' or image_url ~ '^https?://'),
+  -- Where the drawing came from, and the licence that lets us show it.
+  source text not null default '',
+  sort integer not null default 0
+);
+create index if not exists fittings_diagrams_machine_idx on public.fittings_diagrams(machine_id, sort);
+
+create table if not exists public.fittings_diagram_parts (
+  diagram_id uuid not null references public.fittings_diagrams(id) on delete cascade,
+  callout text not null,
+  -- Either one of our items, or just the number the drawing lists.
+  product_id text references public.fittings_products(id) on delete set null,
+  number text not null default '',
+  number_norm text not null default '' check (number_norm = '' or number_norm ~ '^[A-Z0-9]+$'),
+  qty integer not null default 1 check (qty > 0),
+  note text not null default '',
+  primary key (diagram_id, callout, number_norm)
+);
+
+create table if not exists public.fittings_quote_requests (
+  id uuid primary key default gen_random_uuid(),
+  number bigint generated always as identity (start with 7001),
+  -- [{number, qty, product_id?, note?}]: one line per part asked about.
+  lines jsonb not null check (jsonb_typeof(lines) = 'array' and jsonb_array_length(lines) between 1 and 1000),
+  source text not null default 'product' check (source in ('product','list','phone')),
+  status text not null default 'new' check (status in ('new','quoted','won','lost','cancelled')),
+  name text not null default '',
+  company text not null default '',
+  phone text not null default '',
+  email text not null default '',
+  zip text not null default '',
+  machine text not null default '',
+  notes text not null default '',
+  created_at timestamptz not null default now(),
+  check (phone <> '' or email <> '')
+);
+create index if not exists fittings_quote_requests_new_idx on public.fittings_quote_requests(status, created_at desc);
+
+alter table public.fittings_diagrams enable row level security;
+alter table public.fittings_diagram_parts enable row level security;
+alter table public.fittings_quote_requests enable row level security;
+do $$
+declare t text;
+begin
+  foreach t in array array['fittings_diagrams','fittings_diagram_parts'] loop
+    execute format('drop policy if exists "%s is public" on public.%I', t, t);
+    execute format('create policy "%s is public" on public.%I for select to anon, authenticated using (true)', t, t);
+  end loop;
+end $$;
+revoke all on public.fittings_diagrams, public.fittings_diagram_parts, public.fittings_quote_requests from anon, authenticated;
+grant select on public.fittings_diagrams, public.fittings_diagram_parts to anon, authenticated;
+grant all on public.fittings_diagrams, public.fittings_diagram_parts, public.fittings_quote_requests to service_role;
+
+create extension if not exists pg_trgm with schema extensions;
+create index if not exists fittings_xrefs_number_trgm on public.fittings_xrefs using gin (number_norm extensions.gin_trgm_ops);
+create index if not exists fittings_products_name_trgm on public.fittings_products using gin (lower(name) extensions.gin_trgm_ops);

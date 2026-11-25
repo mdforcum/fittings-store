@@ -45,6 +45,70 @@ export const DOC_KINDS = [
 ] as const;
 export type DocKind = (typeof DOC_KINDS)[number]["id"];
 
+/** Condition is a filter on every list and a line on every product page. */
+export const CONDITIONS = [
+  { id: "new", label: "New" },
+  { id: "reman", label: "Remanufactured" },
+  { id: "rebuilt", label: "Rebuilt" },
+  { id: "used", label: "Used" },
+  { id: "surplus", label: "Surplus (genuine OEM, never used)" },
+] as const;
+export type Condition = (typeof CONDITIONS)[number]["id"];
+
+export const PRICE_MODES = [
+  { id: "cart", label: "Sold online: price and cart button" },
+  { id: "quote", label: "Quoted: \u201cRequest a price\u201d instead of the cart" },
+] as const;
+export type PriceMode = (typeof PRICE_MODES)[number]["id"];
+
+/** Machine types, in picker order: ag first, then construction equipment. */
+export const MACHINE_KINDS = [
+  { id: "tractor", label: "Tractor", group: "ag" },
+  { id: "combine", label: "Combine", group: "ag" },
+  { id: "header", label: "Header", group: "ag" },
+  { id: "hay", label: "Hay and forage", group: "ag" },
+  { id: "planter", label: "Planter or drill", group: "ag" },
+  { id: "tillage", label: "Tillage", group: "ag" },
+  { id: "sprayer", label: "Sprayer", group: "ag" },
+  { id: "backhoe", label: "Backhoe loader", group: "construction" },
+  { id: "excavator", label: "Excavator", group: "construction" },
+  { id: "dozer", label: "Dozer", group: "construction" },
+  { id: "wheel-loader", label: "Wheel loader", group: "construction" },
+  { id: "skid-steer", label: "Skid steer", group: "construction" },
+  { id: "track-loader", label: "Compact track loader", group: "construction" },
+  { id: "articulated-truck", label: "Articulated truck", group: "construction" },
+  { id: "other", label: "Other", group: "other" },
+] as const;
+export type MachineKind = (typeof MACHINE_KINDS)[number]["id"];
+
+export type SerialBreak = { serial: string; note: string };
+export type Machine = {
+  id: string;
+  make: string;
+  kind: MachineKind;
+  series: string;
+  model: string;
+  year_from: number | null;
+  year_to: number | null;
+  serial_prefixes: string[];
+  serial_breaks: SerialBreak[];
+  notes: string;
+  sort: number;
+};
+
+/** One "fits this machine" row on an item. */
+export type FitRow = {
+  machine_id: string;
+  position: string;
+  serial_prefix: string;
+  serial_from: string;
+  serial_to: string;
+  engine: string;
+  qty_used: number;
+  strength: "confirmed" | "spec";
+  note: string;
+};
+
 export type SpecField = {
   key: string;
   label: string;
@@ -83,6 +147,7 @@ export type CatalogMeta = {
   categories: Category[];
   locations: Location[];
   items: Array<{ id: string; name: string; part_number: string; qty: number; kind: string }>;
+  machines: Machine[];
 };
 
 /** Everything the foundation adds to an item, as the admin screen edits it. */
@@ -104,6 +169,11 @@ export type Details = {
   documents: Doc[];
   kit_items: KitItem[];
   stock: StockRow[];
+  condition: Condition;
+  universal: boolean;
+  warranty_months: number | null;
+  price_mode: PriceMode;
+  fitment: FitRow[];
 };
 
 export const EMPTY_DETAILS: Details = {
@@ -124,6 +194,11 @@ export const EMPTY_DETAILS: Details = {
   documents: [],
   kit_items: [],
   stock: [],
+  condition: "new",
+  universal: false,
+  warranty_months: null,
+  price_mode: "cart",
+  fitment: [],
 };
 
 /** NMFC freight classes, for items that ship by truck. */
@@ -513,6 +588,121 @@ export const FIT_TEXT = {
   spec: "Meets the spec this machine calls for",
   unknown: "Fit not confirmed for this machine",
 } as const;
+
+/**
+ * The part of a serial number the maker's parts data goes by. Cat's 17-character
+ * PIN (CAT + model + check letter + prefix + sequence) ends with the same
+ * three-character prefix and five-digit sequence as its older 8-character
+ * serials, so both are read as those last 8 characters.
+ */
+export function serialKey(serial: string): string {
+  const s = numberNorm(serial);
+  return s.length === 17 && s.startsWith("CAT") ? s.slice(-8) : s;
+}
+
+/**
+ * Whether a machine with this serial is covered by a fitment row. With a
+ * prefix, the serial must start with it and the range counts the digits after
+ * it ("prefix ABC, 1 to 4999"); without one, the whole serial is compared.
+ * No serial given: a row with no limits fits, a limited one is "check your serial".
+ */
+export function fitsSerial(serial: string, row: Pick<FitRow, "serial_prefix" | "serial_from" | "serial_to">): boolean {
+  const prefix = numberNorm(row.serial_prefix);
+  if (!prefix) return serialInRange(serial, row.serial_from, row.serial_to);
+  const s = serialKey(serial);
+  if (!s) return false;
+  if (!s.startsWith(prefix)) return false;
+  const seq = s.slice(prefix.length).replace(/^0+/, "") || "0";
+  const from = numberNorm(row.serial_from).replace(/^0+/, "");
+  const to = numberNorm(row.serial_to).replace(/^0+/, "");
+  if (!from && !to) return true;
+  const n = Number(seq);
+  if (!Number.isFinite(n)) return false;
+  if (from && n < Number(from)) return false;
+  if (to && n > Number(to)) return false;
+  return true;
+}
+
+export const machineName = (m: Pick<Machine, "make" | "model">) => `${m.make} ${m.model}`.trim();
+
+/** How a machine reads in a list: "Case IH 1066 · 66 series · 1967–1971". */
+export function machineLabel(m: Pick<Machine, "make" | "model" | "series" | "year_from" | "year_to">): string {
+  const years = m.year_from && m.year_to ? `${m.year_from}\u2013${m.year_to}` : m.year_from ? `${m.year_from} on` : m.year_to ? `to ${m.year_to}` : "";
+  return [machineName(m), m.series, years].filter(Boolean).join(" \u00b7 ");
+}
+
+export class MachineProblem extends Error {}
+
+const words = (v: unknown, max: number) => (typeof v === "string" ? v.replace(/\s+/g, " ").trim().slice(0, max) : "");
+
+/** Checks one machine as the admin typed it. Every refusal is a sentence the screen shows as it is. */
+export function cleanMachine(raw: Record<string, unknown>): Omit<Machine, "id"> & { id?: string } {
+  const fail = (m: string): never => {
+    throw new MachineProblem(m);
+  };
+  const make = words(raw.make, 40);
+  const model = words(raw.model, 40);
+  if (!make) fail("Every machine needs a make, like Case IH or Cat.");
+  if (!model) fail("Every machine needs a model, like 1066 or D6T.");
+  const kind = (MACHINE_KINDS.find((k) => k.id === raw.kind)?.id ?? null) as MachineKind | null;
+  if (!kind) fail(`Pick what kind of machine the ${make} ${model} is.`);
+  const year = (v: unknown, label: string) => {
+    if (v == null || v === "") return null;
+    const n = typeof v === "number" ? v : Number(String(v).trim());
+    if (!Number.isInteger(n) || n < 1900 || n > 2100) fail(`${label} must be a year like 1971.`);
+    return n;
+  };
+  const year_from = year(raw.year_from, "First year");
+  const year_to = year(raw.year_to, "Last year");
+  if (year_from && year_to && year_from > year_to) fail("The first year comes after the last year.");
+  const list = Array.isArray(raw.serial_prefixes) ? raw.serial_prefixes : String(raw.serial_prefixes ?? "").split(/[\s,]+/);
+  const serial_prefixes = [...new Set(list.map((p) => numberNorm(String(p))).filter(Boolean))].slice(0, 40);
+  for (const p of serial_prefixes) if (p.length < 2 || p.length > 6) fail(`"${p}" is not a serial prefix. Cat prefixes are three letters or digits, like ABC.`);
+  const serial_breaks = (Array.isArray(raw.serial_breaks) ? raw.serial_breaks : []).slice(0, 40).flatMap((b) => {
+    const r = b as Record<string, unknown>;
+    const serial = words(r.serial, 40);
+    const note = words(r.note, 200);
+    if (!serial && !note) return [];
+    if (!serial) fail("Each serial break needs the serial number where the change starts.");
+    return [{ serial, note }];
+  });
+  const id = typeof raw.id === "string" && /^[0-9a-f-]{36}$/i.test(raw.id) ? raw.id : undefined;
+  return {
+    ...(id ? { id } : {}),
+    make: make!,
+    model: model!,
+    kind: kind!,
+    series: words(raw.series, 40),
+    year_from,
+    year_to,
+    serial_prefixes,
+    serial_breaks,
+    notes: words(raw.notes, 400),
+    sort: typeof raw.sort === "number" && Number.isInteger(raw.sort) ? raw.sort : 0,
+  };
+}
+
+/**
+ * One machine per line, for loading a lineup in one go:
+ * "Make, kind, series, model, first year, last year, prefixes".
+ * Everything after the model may be left off. Kinds match by label or id.
+ */
+export function parseMachineLines(text: string): { machines: Array<ReturnType<typeof cleanMachine>>; problems: string[] } {
+  const machines: Array<ReturnType<typeof cleanMachine>> = [];
+  const problems: string[] = [];
+  text.split(/\r?\n/).forEach((line, i) => {
+    if (!line.trim() || line.trim().startsWith("#")) return;
+    const [make, kindText, series, model, from, to, prefixes] = line.split(/\t|,/).map((c) => c.trim());
+    const k = (kindText ?? "").toLowerCase();
+    const kind = k ? (MACHINE_KINDS.find((m) => m.id === k || m.label.toLowerCase() === k || m.label.toLowerCase().startsWith(k))?.id ?? kindText) : "";
+    try {
+      machines.push(cleanMachine({ make, kind, series, model, year_from: from, year_to: to, serial_prefixes: prefixes ?? "" }));
+    } catch (e) {
+      problems.push(`Line ${i + 1}: ${(e as Error).message}`);
+    }
+  });
+  return { machines, problems };
+}
 
 /** True when a serial number falls inside a fitment's serial range (either end may be open). */
 export function serialInRange(serial: string, from: string, to: string): boolean {

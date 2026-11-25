@@ -275,6 +275,12 @@ dialog.sheet { margin: 0 0 0 auto; width: min(440px, 100%); max-width: 100%; hei
 .det-place { display: grid; font-weight: 600; font-size: .92rem; }
 .det-place small { font-weight: 400; color: var(--muted); }
 .det-note { padding: 12px; border-left: 4px solid var(--hold); background: var(--hold-bg); }
+.form .det-check { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.form .det-check input { width: auto; flex: none; }
+.det-fit { display: grid; gap: 6px; padding: 10px; border: 1px solid var(--rule); border-radius: 3px; }
+.det-fit-top { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+.det-fit-serial { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+@media (max-width: 560px) { .det-fit-top, .det-fit-serial { grid-template-columns: 1fr 1fr; } .det-fit-top > select:first-child { grid-column: 1 / -1; } }
 @media (max-width: 560px) {
   .det-row { grid-template-columns: 1fr 1fr auto; }
   .det-row > select:first-child { grid-column: 1 / -1; }
@@ -367,3 +373,13 @@ dialog.sheet { margin: 0 0 0 auto; width: min(440px, 100%); max-width: 100%; hei
 .art svg.labelled { inset: 9% 6% 5%; width: 88%; height: 86%; }
 .gallery svg.labelled { inset: 6%; width: 88%; height: 88%; }
 .thumb svg.labelled { inset: 4%; width: 92%; height: 92%; }
+
+/* Machines tab */
+.mc { display: grid; gap: 18px; }
+.mc-group h2, .mc-paste h2 { font: 800 1.2rem/1 var(--display); text-transform: uppercase; letter-spacing: .03em; margin-bottom: 8px; }
+.mc-list { list-style: none; display: grid; gap: 6px; }
+.mc-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid var(--rule); border-radius: 3px; background: var(--surface); }
+.mc-list li > span:first-child { display: grid; gap: 2px; }
+.mc-paste { display: grid; gap: 8px; padding: 14px; border: 1px solid var(--rule); border-radius: 3px; background: var(--sunken); }
+.mc-paste pre { white-space: pre-wrap; font-size: .85rem; }
+.mc-paste textarea { width: 100%; font-family: inherit; }

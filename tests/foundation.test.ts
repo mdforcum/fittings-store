@@ -6,8 +6,13 @@ import {
   cartShipping,
   categoryLabel,
   categoryPath,
+  cleanMachine,
   cleanSpecs,
   deliveryPromise,
+  fitsSerial,
+  machineLabel,
+  parseMachineLines,
+  serialKey,
   findByNumber,
   flatTree,
   inherited,
@@ -308,4 +313,65 @@ test("the seeded category tree in schema.sql is well formed", () => {
   for (const leaf of ["orb-plugs", "jic-caps", "jic-plugs", "breather-plugs", "adapters", "other-fittings"]) {
     assert.ok(ids.has(leaf), `missing ${leaf}`);
   }
+});
+
+test("the tree has exactly six departments and every old category sits under one", () => {
+  const sql = readFileSync(new URL("../supabase/schema.sql", import.meta.url), "utf8");
+  const start = sql.indexOf("insert into public.fittings_categories");
+  const block = sql.slice(start, sql.indexOf("on conflict (id) do update", start));
+  const tops = [...block.matchAll(/^\s+\('([a-z0-9-]+)', null,/gm)].map((m) => m[1]);
+  assert.deepEqual(tops, ["machine-systems", "implements", "construction", "hydraulics", "universal", "tires"]);
+  for (const [id, parent] of [
+    ["filters", "machine-systems"],
+    ["cab-glass", "ms-cab"],
+    ["lubricants", "universal"],
+    ["belts", "universal"],
+    ["shop-supplies", "universal"],
+    ["hydraulic-fittings", "hydraulics"],
+    ["tires-drive", "tire-types"],
+  ]) {
+    assert.match(block, new RegExp(`\\('${id}', '${parent}',`), `${id} under ${parent}`);
+  }
+});
+
+test("Cat serials: prefix plus sequence, and the 17-character PIN reads the same", () => {
+  const row = { serial_prefix: "ABC", serial_from: "1", serial_to: "4999" };
+  assert.equal(fitsSerial("ABC01234", row), true);
+  assert.equal(fitsSerial("abc-05000", row), false);
+  assert.equal(fitsSerial("XYZ01234", row), false);
+  assert.equal(serialKey("CAT0D6TCABC01234"), "CAT0D6TCABC01234"); // 16 characters: not a PIN
+  assert.equal(serialKey("CAT00D6TCABC01234"), "ABC01234");
+  assert.equal(fitsSerial("CAT00D6TCABC01234", row), true);
+  assert.equal(fitsSerial("", row), false);
+  assert.equal(fitsSerial("ABC77777", { serial_prefix: "ABC", serial_from: "", serial_to: "" }), true);
+  // No prefix: the whole serial compares as before.
+  assert.equal(fitsSerial("JJA0012345", { serial_prefix: "", serial_from: "JJA0010000", serial_to: "JJA0019999" }), true);
+});
+
+test("machines are checked and tidied before they are saved", () => {
+  const m = cleanMachine({ make: " Case  IH ", kind: "tractor", series: "66 series", model: "1066", year_from: "1967", year_to: 1971, serial_prefixes: "abc, xyz abc" });
+  assert.equal(m.make, "Case IH");
+  assert.deepEqual(m.serial_prefixes, ["ABC", "XYZ"]);
+  assert.equal(machineLabel(m), "Case IH 1066 \u00b7 66 series \u00b7 1967\u20131971");
+  assert.throws(() => cleanMachine({ make: "Cat", kind: "dozer" }), /needs a model/);
+  assert.throws(() => cleanMachine({ make: "Cat", model: "D6", kind: "boat" }), /what kind of machine/);
+  assert.throws(() => cleanMachine({ make: "Cat", model: "D6", kind: "dozer", year_from: 1990, year_to: 1980 }), /first year comes after/);
+  assert.throws(() => cleanMachine({ make: "Cat", model: "D6", kind: "dozer", serial_prefixes: "A" }), /not a serial prefix/);
+});
+
+test("a pasted lineup: kinds by name, blank and # lines skipped, problems by line", () => {
+  const { machines, problems } = parseMachineLines(
+    "# ag\nCase IH, Tractor, 66 series, 1066\n\nCase, backhoe loader, 580 series, 580 Super N\nCat\tdozer\tD series\tD6\t\t\tABC XYZ\nCat, boat, , 320\nCat, , , 320\n",
+  );
+  assert.deepEqual(
+    machines.map((m) => [m.make, m.kind, m.model, m.serial_prefixes.join(" ")]),
+    [
+      ["Case IH", "tractor", "1066", ""],
+      ["Case", "backhoe", "580 Super N", ""],
+      ["Cat", "dozer", "D6", "ABC XYZ"],
+    ],
+  );
+  assert.equal(problems.length, 2);
+  assert.match(problems[0], /^Line 6: /);
+  assert.match(problems[1], /^Line 7: Pick what kind/);
 });
