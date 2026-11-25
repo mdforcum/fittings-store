@@ -3,6 +3,7 @@
 import crypto from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { normPart } from "./match";
+import { numberIndex } from "./foundation-server";
 import { T, getConfig, setConfig } from "./server";
 import {
   allowedByRobots,
@@ -33,6 +34,7 @@ export type SupplierState = {
 };
 
 const MIN_GAP_S = 5; // even when a supplier asks for no delay
+const ROBOTS_MAX_AGE_MS = 7 * 86_400_000;
 const MAX_PAGES_PER_SCAN = 60;
 const IMAGE_TYPES: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
 
@@ -139,8 +141,9 @@ export async function step(
     return { did, wait: secondsUntil(state.next_fetch_at), remaining: state.queue.length };
   };
 
-  // The supplier's rules come first, refreshed once a day.
-  const stale = !state.robots || Date.now() - Date.parse(state.robots.fetched_at) > 86_400_000;
+  // The supplier's rules come first. They are kept for a week, and reading them
+  // does not hold up the first page: the crawl delay is between page requests.
+  const stale = !state.robots || Date.now() - Date.parse(state.robots.fetched_at) > ROBOTS_MAX_AGE_MS;
   if (stale) {
     try {
       const res = await politeFetch(`https://${source.host}/robots.txt`, agent, "text/plain");
@@ -158,8 +161,6 @@ export async function step(
       state.next_fetch_at = new Date(Date.now() + 60_000).toISOString();
       return done("retry");
     }
-    state.next_fetch_at = gap();
-    return done("rules");
   }
 
   const job = state.queue[0];
@@ -194,10 +195,9 @@ export async function step(
       const saved = await db.from(T.supplierPhotos).upsert({ ...row, source: source.id }, { onConflict: "product_id,image_url", ignoreDuplicates: true }).select("id");
       if (saved.error) throw new Error(saved.error.message);
       if (!saved.data?.length) {
-        await db.storage.from(T.privateBucket).remove([held]); // already imported earlier
-      } else if (state.permission) {
-        await publish(db, row);
+        await db.storage.from(T.privateBucket).remove([held]); // already downloaded earlier
       }
+      // Held for review either way. Nothing reaches the shop until "Add to the shop" is pressed.
     } else {
       const res = await politeFetch(url, agent, "text/html");
       if (!res.ok) throw new Error(`page answered ${res.status}`);
@@ -217,10 +217,13 @@ export async function step(
           const saved = await db.from(T.supplierIndex).upsert(rows);
           if (saved.error) throw new Error(saved.error.message);
         }
+        // Photos of the items we stock on this page come next, before the next page.
+        const photos = rows.length ? await photoJobs(db, source, rows, state.queue) : [];
         state.pages += 1;
         if (next && state.pages < MAX_PAGES_PER_SCAN && !state.queue.some((j) => j.t === "listing" && j.url === next)) {
           state.queue.splice(1, 0, { t: "listing", url: next });
         }
+        state.queue.splice(1, 0, ...photos);
         state.scanned_at = new Date().toISOString();
       } else {
         const page = parseProductPage(html, source.host);
@@ -247,6 +250,39 @@ export async function step(
   return done(job.t);
 }
 
+/**
+ * Image downloads for items we stock that appear in these index rows, skipping
+ * items that already have a photo from this supplier or are already queued.
+ */
+export async function photoJobs(
+  db: SupabaseClient,
+  source: SupplierSource,
+  rows: IndexRow[],
+  queue: SupplierJob[],
+): Promise<SupplierJob[]> {
+  const products = await db.from(T.products).select("id, part_number");
+  if (products.error) throw new Error(products.error.message);
+  const found = matchParts(
+    (products.data ?? []).map((p) => ({ id: p.id as string, part_number: (p.part_number as string) ?? "" })),
+    rows,
+  );
+  // An item's supplier number, recorded under its catalog details, matches too.
+  const numbers = await numberIndex(db);
+  for (const row of rows) {
+    const id = numbers.get(row.part_norm);
+    if (id && !found.has(id)) found.set(id, row);
+  }
+  if (found.size === 0) return [];
+  const have = new Set((await allPhotos(db, source)).map((ph) => ph.product_id));
+  const queued = new Set(queue.flatMap((j) => (j.t === "listing" ? [] : [j.product_id])));
+  const jobs: SupplierJob[] = [];
+  for (const [productId, row] of found) {
+    if (have.has(productId) || queued.has(productId) || !row.image_url) continue;
+    jobs.push({ t: "image", image_url: row.image_url, page_url: row.page_url, product_id: productId });
+  }
+  return jobs;
+}
+
 export async function loadSupplier(db: SupabaseClient, source: SupplierSource): Promise<SupplierData> {
   const [state, products, index, photos] = await Promise.all([
     loadState(db, source),
@@ -263,6 +299,12 @@ export async function loadSupplier(db: SupabaseClient, source: SupplierSource): 
     photos: ((p.photos as string[] | null) ?? []) as string[],
   }));
   const found = matchParts(list, rows);
+  const numbers = await numberIndex(db);
+  const byNorm = new Map(rows.map((r) => [r.part_norm, r]));
+  for (const [norm, id] of numbers) {
+    const row = byNorm.get(norm);
+    if (row && !found.has(id)) found.set(id, row);
+  }
 
   const held = photos.filter((p) => !p.public_path).map((p) => p.held_path);
   const links = new Map<string, string>();

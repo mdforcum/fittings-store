@@ -80,6 +80,12 @@ export default function SupplierPhotos({ say }: { say: Say }) {
 
   const found = data.products.filter((p) => p.found && !p.imported.length && !p.queued);
   const imported = data.products.filter((p) => p.imported.length).length;
+  const held = data.products.flatMap((p) => p.imported.filter((ph) => !ph.published));
+  const publishAll = async (ids?: string[]) => {
+    const reply = await call({ action: "photos.publish", ...(ids ? { ids } : {}) });
+    const added = (reply?.result as { added?: number } | undefined)?.added ?? 0;
+    if (added) say(`${added} photo${added === 1 ? "" : "s"} added to the shop.`);
+  };
   const delay = data.crawl_delay ?? 60;
 
   return (
@@ -91,15 +97,16 @@ export default function SupplierPhotos({ say }: { say: Say }) {
         </div>
       </div>
       <p className="sub">
-        Finds the supplier&apos;s own product photo for each part you stock, matched by part number, and adds it to the
-        shop once you have their permission.
+        Reads the supplier&apos;s catalog pages and downloads their photo of every part you stock as it goes, matched by
+        part number. The photos wait here for you to review, then go into the shop with one click once you have their
+        permission.
       </p>
 
       <div className="card">
         <h2>Permission</h2>
         <div className="inline">
           <span className={`pill ${data.permission ? "ok" : "hold"}`}>
-            {data.permission ? "Recorded: imported photos show in the shop" : "Not recorded: imported photos are on hold"}
+            {data.permission ? "Recorded: reviewed photos can go into the shop" : "Not recorded: downloaded photos stay on hold"}
           </span>
           {data.permission_at && <span className="hint">since {when(data.permission_at)}</span>}
         </div>
@@ -141,11 +148,11 @@ export default function SupplierPhotos({ say }: { say: Say }) {
               disabled={!(note ?? data.permission_note).trim()}
               onClick={async () => {
                 if (await call({ action: "permission.set", granted: true, note: note ?? data.permission_note })) {
-                  say("Permission recorded. Imported photos now show in the shop.");
+                  say("Permission recorded. Review the photos below, then add them to the shop.");
                 }
               }}
             >
-              Permission received: show them in the shop
+              Permission received
             </button>
           )}
         </div>
@@ -155,8 +162,9 @@ export default function SupplierPhotos({ say }: { say: Say }) {
         <h2>1. Read their catalog pages</h2>
         <p className="hint">
           These are the category pages on {data.source.host} that list the parts you stock. The importer reads each one
-          for part numbers and photos. It follows the site&apos;s published rules for automated readers: it never uses
-          site search, and it waits {delay} seconds between requests because that is what the site asks for.
+          for part numbers, and downloads the photo of each part you stock right after. It follows the site&apos;s
+          published rules for automated readers: it never uses site search, and it waits {delay} seconds between
+          requests, pages and photos alike, because that is what the site asks for.
         </p>
         <div className="form">
           <label htmlFor="sp-pages">
@@ -239,20 +247,34 @@ export default function SupplierPhotos({ say }: { say: Say }) {
 
       <div className="card">
         <div className="inline" style={{ justifyContent: "space-between" }}>
-          <h2>2. Match and import</h2>
-          <button
-            type="button"
-            className="btn sm"
-            disabled={running || found.length === 0}
-            onClick={async () => {
-              if (await call({ action: "import.queue" })) void work();
-            }}
-          >
-            Import all {found.length} found
-          </button>
+          <h2>2. Review and add to the shop</h2>
+          <span className="inline">
+            {found.length > 0 && (
+              <button
+                type="button"
+                className="btn ghost sm"
+                disabled={running}
+                onClick={async () => {
+                  if (await call({ action: "import.queue" })) void work();
+                }}
+              >
+                Download {found.length} more
+              </button>
+            )}
+            <button
+              type="button"
+              className="btn sm"
+              disabled={running || held.length === 0 || !data.permission}
+              onClick={() => void publishAll()}
+            >
+              Add {held.length} photo{held.length === 1 ? "" : "s"} to the shop
+            </button>
+          </span>
         </div>
         <p className="hint">
-          {imported} of {data.products.length} items have a supplier photo. Your own photos always stay first in the shop.
+          {imported} of {data.products.length} items have a supplier photo downloaded. Check each one below and remove any
+          that are wrong; the rest go into the shop together. Your own photos always stay first.
+          {!data.permission && held.length > 0 ? " Record the supplier's permission above to add them." : ""}
         </p>
         <ul className="sp-list">
           {data.products.map((p) => (
@@ -304,8 +326,13 @@ export default function SupplierPhotos({ say }: { say: Say }) {
                 {p.imported.length > 0 ? (
                   <>
                     <span className={`pill ${p.imported[0].published ? "ok" : "hold"}`}>
-                      {p.imported[0].published ? "In the shop" : "On hold"}
+                      {p.imported[0].published ? "In the shop" : "To review"}
                     </span>
+                    {!p.imported[0].published && data.permission && (
+                      <button type="button" className="linkbtn" onClick={() => void publishAll([p.imported[0].id])}>
+                        Add
+                      </button>
+                    )}
                     <button type="button" className="linkbtn" onClick={() => call({ action: "photo.remove", id: p.imported[0].id })}>
                       Remove
                     </button>
@@ -321,7 +348,7 @@ export default function SupplierPhotos({ say }: { say: Say }) {
                       if (await call({ action: "import.queue", product_ids: [p.id] })) void work();
                     }}
                   >
-                    Import
+                    Download
                   </button>
                 ) : (
                   <span className="pill muted">{data.index_count ? "Not found" : "Not read yet"}</span>

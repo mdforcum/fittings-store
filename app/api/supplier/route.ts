@@ -29,12 +29,24 @@ async function run(action: string, a: Payload, db: SupabaseClient, source: Suppl
       state.permission_note = str(a.note, 300);
       state.permission_at = granted ? new Date().toISOString() : null;
       await saveState(db, source, state);
-      // Flipping the switch moves every imported photo into, or back out of, the shop.
-      for (const row of await allPhotos(db, source)) {
-        if (granted) await publish(db, row);
-        else await unpublish(db, row);
-      }
+      // Taking permission back pulls every supplier photo out of the shop. Granting it
+      // publishes nothing by itself: photos go in with "Add to the shop" after review.
+      if (!granted) for (const row of await allPhotos(db, source)) await unpublish(db, row);
       return {};
+    }
+
+    case "photos.publish": {
+      const state = await loadState(db, source);
+      if (!state.permission) fail(`Record ${source.name}'s permission first. Until then the photos stay on hold.`);
+      const wanted = Array.isArray(a.ids) ? new Set(a.ids.map((x) => str(x, 60))) : null;
+      let added = 0;
+      for (const row of await allPhotos(db, source)) {
+        if (row.public_path || (wanted && !wanted.has(row.id))) continue;
+        await publish(db, row);
+        added += 1;
+      }
+      if (added === 0) fail("Every reviewed photo is already in the shop.");
+      return { added };
     }
 
     case "listings.set": {
