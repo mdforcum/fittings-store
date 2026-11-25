@@ -2,7 +2,7 @@
 // The hose builder: three ways to describe the hose (photos, a tag or part
 // number, or by hand), one build sheet, and two ways to order it.
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   EMPTY_BUILD,
   END_FAMILIES,
@@ -23,6 +23,7 @@ import {
 } from "@/lib/hose";
 import type { HoseReading } from "@/lib/hose-read";
 import { prepare } from "@/lib/scan";
+import MeasureGuide from "./MeasureGuide";
 
 type Way = "photo" | "number" | "hand";
 type Builder = { id: string; name: string; phone: string; hours: string; one_hour: boolean };
@@ -73,6 +74,27 @@ export default function HoseBuilder({ storeName, phone, reading }: { storeName: 
   const [read, setRead] = useState<HoseReading | null>(null);
   const [shown, setShown] = useState(false);
   const [done, setDone] = useState<Done | null>(null);
+  const [pro, setPro] = useState(false);
+
+  // Pros who build hoses every day can switch the guides off; the choice is remembered on this device.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      try {
+        setPro(localStorage.getItem("hb-pro") === "1");
+      } catch {
+        /* storage blocked: guides stay on */
+      }
+    }, 0);
+    return () => clearTimeout(t);
+  }, []);
+  const togglePro = (on: boolean) => {
+    setPro(on);
+    try {
+      localStorage.setItem("hb-pro", on ? "1" : "0");
+    } catch {
+      /* not remembered, still applied */
+    }
+  };
 
   const build = useMemo(() => fromDraft(d), [d]);
   const problems = checkBuild(build);
@@ -129,6 +151,11 @@ export default function HoseBuilder({ storeName, phone, reading }: { storeName: 
             ) : null}
           </p>
         </div>
+
+        <label className="hb-pro" htmlFor="h-pro">
+          <input id="h-pro" type="checkbox" checked={pro} onChange={(e) => togglePro(e.target.checked)} />
+          I build hoses: skip the guides
+        </label>
 
         <div className="hb-ways" role="tablist" aria-label="How to describe the hose">
           {(
@@ -224,12 +251,12 @@ export default function HoseBuilder({ storeName, phone, reading }: { storeName: 
                   <input id="h-line" autoComplete="off" maxLength={40} value={d.hose_line} onChange={(e) => set("hose_line", e.target.value)} />
                 </label>
               </div>
-              <p className="hint">The working pressure is printed along the hose, often as WP followed by psi or bar.</p>
+              {!pro && <p className="hint">The working pressure is printed along the hose, often as WP followed by psi or bar.</p>}
             </fieldset>
 
-            <EndPicker label="End A" end={d.end_a} onChange={(p) => setEnd("end_a", p)} />
-            <EndPicker label="End B" end={d.end_b} onChange={(p) => setEnd("end_b", p)} />
-            <ThreadHelp onPick={(which, p) => setEnd(which, p)} />
+            <EndPicker label="End A" end={d.end_a} pro={pro} onChange={(p) => setEnd("end_a", p)} />
+            <EndPicker label="End B" end={d.end_b} pro={pro} onChange={(p) => setEnd("end_b", p)} />
+            {!pro && <ThreadHelp onPick={(which, p) => setEnd(which, p)} />}
 
             <fieldset>
               <legend>Length and angle</legend>
@@ -259,11 +286,18 @@ export default function HoseBuilder({ storeName, phone, reading }: { storeName: 
                 </label>
               </div>
               <p className="hint">
-                Measure from the {measurePoint(d.end_a)} at A to the {measurePoint(d.end_b)} at B.
-                {d.end_a.shape !== "straight" && d.end_b.shape !== "straight"
-                  ? " For the angle, look down the hose from end A and measure clockwise from A to B; 0 means both point the same way."
-                  : ""}
+                Overall length: {measurePoint(d.end_a)} at A to {measurePoint(d.end_b)} at B.
+                {d.end_a.shape !== "straight" && d.end_b.shape !== "straight" ? " Angle: clockwise from A to B, looking from A." : ""}
               </p>
+              {!pro && (
+                <MeasureGuide
+                  endA={d.end_a}
+                  endB={d.end_b}
+                  reading={reading}
+                  onLength={(n) => set("length_in", String(n))}
+                  onAngle={(deg) => set("angle", String(deg))}
+                />
+              )}
               <label htmlFor="h-notes">
                 Anything else the builder should know
                 <textarea id="h-notes" maxLength={500} value={d.notes} onChange={(e) => set("notes", e.target.value)} />
@@ -298,7 +332,7 @@ export default function HoseBuilder({ storeName, phone, reading }: { storeName: 
   );
 }
 
-function EndPicker({ label, end, onChange }: { label: string; end: HoseEnd; onChange: (p: Partial<HoseEnd>) => void }) {
+function EndPicker({ label, end, pro, onChange }: { label: string; end: HoseEnd; pro: boolean; onChange: (p: Partial<HoseEnd>) => void }) {
   const fam = familyOf(end.family) ?? END_FAMILIES[0];
   const id = label.replace(/\W/g, "").toLowerCase();
   return (
@@ -346,7 +380,7 @@ function EndPicker({ label, end, onChange }: { label: string; end: HoseEnd; onCh
           </select>
         </label>
       </div>
-      {fam.note && <p className="hint">{fam.note}</p>}
+      {fam.note && !pro && <p className="hint">{fam.note}</p>}
     </fieldset>
   );
 }

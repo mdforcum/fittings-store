@@ -108,6 +108,14 @@ pressures are never invented. The sheet states where length is measured, the
 length and angle tolerances, and the rule that hose and fittings come from one
 maker's system crimped to that maker's spec.
 
+**Measuring guide.** Under length and angle, a step-by-step walkthrough for
+each way a customer measures: the hose off the machine (lay it straight; the
+last step reads two photos of the tape, one at each end), the hose still on the
+machine (safety first, then a string along the route), and the angle between
+two elbows (tap a clock position). Steps are written from the ends picked
+(`lib/measure.ts`). "I build hoses: skip the guides" hides all of it and is
+remembered on that device.
+
 Machine-down requests are shown the places marked in the Hoses tab as
 promising a one-hour build; with none, the customer is told to call the store.
 Shop requests are confirmed and priced by hand for now.

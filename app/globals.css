@@ -335,3 +335,30 @@ dialog.sheet { margin: 0 0 0 auto; width: min(440px, 100%); max-width: 100%; hei
 .hs-places { display: grid; gap: 10px; }
 .hs-places h2 { font: 800 1.4rem/1 var(--display); text-transform: uppercase; letter-spacing: .03em; }
 .hs-place { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; align-items: center; padding: 10px; border: 1px solid var(--rule); border-radius: 3px; }
+
+/* Measuring guide */
+.hb-pro { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; justify-self: start; }
+.hb-pro input { width: 20px; height: 20px; }
+.mg-start { display: grid; gap: 8px; }
+.mg-q { font-weight: 700; }
+.mg-paths { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px; }
+.mg-path { display: grid; gap: 2px; text-align: left; padding: 12px; border: 1px solid var(--rule); border-radius: 3px; background: var(--sunken); color: var(--ink); font: inherit; cursor: pointer; }
+.mg-path span { color: var(--muted); font-size: .9rem; }
+.mg-path:hover { border-color: var(--primary); }
+.mg { display: grid; gap: 10px; padding: 14px; border: 2px solid var(--primary); border-radius: 3px; background: var(--surface); }
+.mg h3 { font: 800 1.35rem/1.05 var(--display); text-transform: uppercase; letter-spacing: .03em; }
+.mg-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.mg-count { font: 600 .85rem/1 var(--mono); color: var(--muted); }
+.mg-dots { list-style: none; display: flex; gap: 6px; }
+.mg-dots li { flex: 1; height: 4px; border-radius: 2px; background: var(--rule); }
+.mg-dots li.done { background: var(--ink); }
+.mg-dots li.on { background: var(--primary); }
+.mg-warn { padding: 8px 10px; border-left: 4px solid var(--bad); background: var(--bad-bg); font-weight: 700; }
+.mg-nav { display: flex; justify-content: space-between; gap: 8px; }
+.mg-tape { display: grid; gap: 10px; }
+.mg-clock { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; max-width: 280px; justify-self: center; }
+.mg-clock button { display: grid; place-items: center; gap: 2px; aspect-ratio: 1; border: 1px solid var(--rule); border-radius: 50%; background: var(--sunken); color: var(--ink); font: 700 1rem/1 var(--sans, inherit); cursor: pointer; }
+.mg-clock button small { font-weight: 400; color: var(--muted); }
+.mg-clock button:hover, .mg-clock button:focus-visible { border-color: var(--primary); background: var(--surface); }
+.mg-center { display: grid; place-items: center; font: 800 1.6rem/1 var(--display); color: var(--primary); }
+.ok { color: var(--ok); font-weight: 600; }

@@ -10,6 +10,7 @@ import { numberNorm } from "@/lib/foundation";
 import { SchemaMissing } from "@/lib/foundation-server";
 import { TAG_RE, buildSheet, canBuild, checkBuild, cleanBuild, makeTag, type Build } from "@/lib/hose";
 import { HOSE_READ_PROMPT, HOSE_READ_SCHEMA, cleanHoseReading } from "@/lib/hose-read";
+import { TAPE_READ_PROMPT, TAPE_READ_SCHEMA, cleanTapeReading } from "@/lib/measure";
 import { T, adminDb, json } from "@/lib/server";
 import { VisionError, askVision, visionReady } from "@/lib/vision";
 
@@ -105,28 +106,45 @@ export async function POST(req: Request) {
 }
 
 async function readPhotos(req: Request): Promise<Response> {
-  if (!visionReady()) return bad("Photo reading is not switched on yet. Build it by hand below, or call us.", 503);
-  if (!allowRead(req)) return bad("That is a lot of photos in an hour. Build it by hand below, or call us.", 429);
-  const images: Array<{ bytes: Buffer; mediaType: string; caption: string }> = [];
+  if (!visionReady()) return bad("Photo reading is not switched on yet. Type the measurements in, or call us.", 503);
+  if (!allowRead(req)) return bad("That is a lot of photos in an hour. Type the measurements in, or call us.", 429);
+  let form: FormData;
   try {
-    const form = await req.formData();
-    const captions: Record<string, string> = {
-      layline: "Photo of the printing along the hose:",
-      end_a: "Photo of one end of the hose:",
-      end_b: "Photo of the other end of the hose:",
-    };
-    for (const key of Object.keys(captions)) {
-      const f = form.get(key);
-      if (!(f instanceof Blob) || f.size === 0) continue;
-      if (!PHOTO_TYPES.has(f.type)) return bad("Photos must be JPEG, PNG or WebP.");
-      if (f.size > 4_500_000) return bad("One of the photos is too large. Try again; the page shrinks them first.");
-      images.push({ bytes: Buffer.from(await f.arrayBuffer()), mediaType: f.type, caption: captions[key] });
-    }
+    form = await req.formData();
   } catch {
     return bad("Those photos could not be read.");
   }
+  const tape = form.get("tape_a") instanceof Blob || form.get("tape_b") instanceof Blob;
+  const captions: Record<string, string> = tape
+    ? { tape_a: "Photo 1: the tape at end A.", tape_b: "Photo 2: the tape at end B." }
+    : {
+        layline: "Photo of the printing along the hose:",
+        end_a: "Photo of one end of the hose:",
+        end_b: "Photo of the other end of the hose:",
+      };
+  const images: Array<{ bytes: Buffer; mediaType: string; caption: string }> = [];
+  for (const key of Object.keys(captions)) {
+    const f = form.get(key);
+    if (!(f instanceof Blob) || f.size === 0) continue;
+    if (!PHOTO_TYPES.has(f.type)) return bad("Photos must be JPEG, PNG or WebP.");
+    if (f.size > 4_500_000) return bad("One of the photos is too large. Try again; the page shrinks them first.");
+    images.push({ bytes: Buffer.from(await f.arrayBuffer()), mediaType: f.type, caption: captions[key] });
+  }
   if (images.length === 0) return bad("Add at least one photo.");
+  if (tape && images.length < 2) return bad("Take one photo of the tape at each end.");
   try {
+    if (tape) {
+      const raw = await askVision({
+        system: TAPE_READ_PROMPT,
+        tool: "record_tape",
+        description: "Record the tape measure reading at each end of the hose.",
+        schema: TAPE_READ_SCHEMA as unknown as Record<string, unknown>,
+        images,
+        text: "Read the tape at each fitting.",
+        maxTokens: 400,
+      });
+      return json({ ok: true, tape: cleanTapeReading(raw) });
+    }
     const raw = await askVision({
       system: HOSE_READ_PROMPT,
       tool: "record_hose",
@@ -140,7 +158,7 @@ async function readPhotos(req: Request): Promise<Response> {
   } catch (e) {
     if (e instanceof VisionError) return bad(e.message, 502);
     console.error("hose read failed", e);
-    return bad("The photos could not be read. Build it by hand below, or call us.", 500);
+    return bad("The photos could not be read. Type the measurements in, or call us.", 500);
   }
 }
 
