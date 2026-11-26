@@ -4,6 +4,7 @@ import type { AdminData, Order, OrderCharge, ParcelPreset, RateQuote } from "@/l
 import { CORE_FULL_DAYS, CORE_PARTIAL_DAYS, coreCredit, storeDate } from "@/lib/checkout-rules";
 import { money } from "@/lib/catalog";
 import type { Act, Say } from "../Admin";
+import { shipsFrom } from "@/lib/places";
 
 type Props = { data: AdminData; act: Act; say: Say };
 type View = "open" | "shipped" | "all";
@@ -160,6 +161,11 @@ function OrderCard({ o, data, act, say }: { o: Order; data: AdminData; act: Act;
           </a>
         )}
       </div>
+      {(data.places?.locations.length ?? 0) > 1 && (o.from?.length ?? 0) > 0 && (
+        <p className="ships-from">
+          {o.ship_method === "pickup" ? "Picks up at" : "Ships from"}: {shipsFrom(o.from, data.places.locations)}
+        </p>
+      )}
       {o.stock_short && (
         <p className="warn">
           Stock ran short on this order: another sale took the last pieces first. Check the shelf before packing.

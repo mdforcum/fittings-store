@@ -3,6 +3,7 @@ import { useState } from "react";
 import type { AdminData, Mode, ParcelPreset } from "@/lib/admin-types";
 import { SHIP_ZONES, dollars, toCents } from "@/lib/catalog";
 import type { Act, Say } from "../Admin";
+import Locations from "./Locations";
 
 type Props = { data: AdminData; act: Act; say: Say };
 type PresetDraft = { name: string; length: string; width: string; height: string; weight_oz: string };
@@ -344,6 +345,9 @@ export default function SettingsTab({ data, act, say }: Props) {
           Save settings
         </button>
       </p>
+
+      {/* Saved on its own: each location has its own Save button. */}
+      <Locations data={data} act={act} say={say} />
     </>
   );
 }

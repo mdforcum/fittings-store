@@ -28,6 +28,17 @@ import {
 import { coreCredit, storeDate } from "@/lib/checkout-rules";
 import { placeByType } from "@/lib/foundation-server";
 import { heldMap } from "@/lib/holds";
+import {
+  NO_PLACES,
+  byLocationOrder,
+  locationProblem,
+  normCode,
+  normalizeLocation,
+  onhandMap,
+  slugify,
+  type Allocation,
+  type Dealer,
+} from "@/lib/places";
 import { getStripe } from "@/lib/payments";
 import { T, adminDb, env, getConfig, json, setConfig } from "@/lib/server";
 import { buyLabel, freshLabelUrl, getRates } from "@/lib/shippo";
@@ -38,6 +49,9 @@ class ActionError extends Error {}
 /** The database change this action needs hasn't been run yet (missing function or column). */
 const notSetUp = (e: { code?: string; message?: string }) =>
   e.code === "PGRST202" || e.code === "42883" || e.code === "PGRST204" || /could not find the function/i.test(e.message ?? "");
+
+const isId = (v: unknown): v is string =>
+  typeof v === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 
 const fail = (message: string): never => {
   throw new ActionError(message);
@@ -88,13 +102,23 @@ async function loadData(db: SupabaseClient): Promise<AdminData> {
   // Charges and quotes came later: if their tables are missing the rest of the
   // back office still loads, with these lists empty.
   const orderIds = (o.data ?? []).map((r) => r.id as string);
-  const [ch, q, h] = await Promise.all([
+  const [ch, q, h, dl, lo, oh, al] = await Promise.all([
     orderIds.length
       ? db.from("fittings_order_charges").select("*, returns:fittings_core_returns(*)").in("order_id", orderIds)
       : Promise.resolve({ data: [], error: null }),
     db.from("fittings_quote_requests").select("*").order("created_at", { ascending: false }).limit(200),
     db.rpc("fittings_held"),
+    // Dealers and locations came later still: missing tables mean one place.
+    db.from("fittings_dealers").select("id, name, slug").order("created_at"),
+    db.from("fittings_locations").select("*").eq("kind", "store"),
+    db.from("fittings_onhand").select("product_id, location_id, qty").limit(50000),
+    orderIds.length
+      ? db.from("fittings_allocations").select("order_id, product_id, location_id, qty").in("order_id", orderIds)
+      : Promise.resolve({ data: [], error: null }),
   ]);
+  const placesReady = !dl.error && !lo.error && !oh.error;
+  const fromBy = new Map<string, Allocation[]>();
+  for (const a of al.error ? [] : ((al.data ?? []) as Allocation[])) fromBy.set(a.order_id, [...(fromBy.get(a.order_id) ?? []), a]);
   const chargesBy = new Map<string, OrderCharge[]>();
   for (const row of ch.error ? [] : (ch.data ?? [])) {
     const r = row as OrderCharge & { order_id: string };
@@ -121,9 +145,19 @@ async function loadData(db: SupabaseClient): Promise<AdminData> {
       charges_cents: ord.charges_cents ?? 0,
       ship_method: ord.ship_method === "pickup" ? "pickup" : "parcel",
       charges: (chargesBy.get(ord.id) ?? []).sort((a, b) => a.id - b.id),
+      from: fromBy.get(ord.id) ?? [],
     })),
     quotes: q.error ? [] : ((q.data ?? []) as QuoteRequest[]),
     held: heldMap(h.error ? [] : (h.data as Array<{ product_id: unknown; held: unknown }>)),
+    places: placesReady
+      ? {
+          ready: true,
+          dealers: (dl.data ?? []) as Dealer[],
+          locations: ((lo.data ?? []) as Array<Record<string, unknown>>).map(normalizeLocation).sort(byLocationOrder),
+          default_location_id: ((s.data as { default_location_id?: string | null } | null)?.default_location_id ?? null),
+          onhand: onhandMap(oh.data as Array<{ product_id: unknown; location_id: unknown; qty: unknown }>),
+        }
+      : NO_PLACES,
     integrations: {
       stripe: modeOf(env.stripe, "_live_", "_test_"),
       webhook: webhook || !!process.env.STRIPE_WEBHOOK_SECRET,
@@ -221,7 +255,8 @@ async function run(action: string, a: Payload, db: SupabaseClient, origin: strin
       if (delta == null || delta === 0) return {};
       const kind = a.kind === "receive" || a.kind === "return" ? a.kind : "adjust";
       if (kind !== "adjust" && delta < 0) fail("A shipment or return adds parts. Use the count to take parts off.");
-      const r = await db.rpc("fittings_adjust_qty", { p_id: id, p_delta: delta, p_kind: kind, p_note: str(a.note, 200) });
+      const loc = isId(a.location_id) ? (a.location_id as string) : null;
+      const r = await db.rpc("fittings_adjust_qty", { p_id: id, p_delta: delta, p_kind: kind, p_note: str(a.note, 200), ...(loc ? { p_location: loc } : {}) });
       // Before supabase/add-stock-holds.sql runs, only the two-value version exists.
       if (r.error && notSetUp(r.error)) await must(db.rpc("fittings_adjust_qty", { p_id: id, p_delta: delta }));
       else if (r.error) throw new Error(r.error.message);
@@ -231,16 +266,74 @@ async function run(action: string, a: Payload, db: SupabaseClient, origin: strin
     case "qty.count": {
       const n = int(a.qty);
       if (n == null || n < 0) fail("Quantity must be a whole number, 0 or more.");
-      const r = await db.rpc("fittings_count_qty", { p_id: id, p_qty: n, p_note: str(a.note, 200) });
+      const loc = isId(a.location_id) ? (a.location_id as string) : null;
+      const r = await db.rpc("fittings_count_qty", { p_id: id, p_qty: n, p_note: str(a.note, 200), ...(loc ? { p_location: loc } : {}) });
       if (r.error && notSetUp(r.error)) await must(db.from(T.products).update({ qty: n }).eq("id", id));
       else if (r.error) throw new Error(r.error.message);
       return {};
     }
 
+    case "qty.transfer": {
+      const n = int(a.qty);
+      if (n == null || n < 1) fail("Move at least one.");
+      if (!isId(a.from) || !isId(a.to)) fail("Pick where the parts are and where they go.");
+      if (a.from === a.to) fail("Pick two different locations.");
+      const r = await db.rpc("fittings_transfer", { p_id: id, p_from: a.from, p_to: a.to, p_qty: n, p_note: str(a.note, 200) });
+      if (r.error) fail(/only \d+ there/.test(r.error.message) ? `Only ${r.error.message.match(/only (\d+)/)![1]} there to move.` : r.error.message);
+      return {};
+    }
+
+    case "dealer.save": {
+      const name = str(a.name, 80).trim();
+      if (!name) fail("Give the dealer a name.");
+      if (isId(a.dealer_id)) {
+        await must(db.from("fittings_dealers").update({ name }).eq("id", a.dealer_id as string));
+        return {};
+      }
+      const slug = slugify(name);
+      if (slug.length < 2) fail("Give the dealer a name with letters or numbers.");
+      const ins = await db.from("fittings_dealers").insert({ name, slug }).select("id").single();
+      if (ins.error) fail(/duplicate|unique/i.test(ins.error.message) ? "A dealer with that name is already set up." : ins.error.message);
+      return { dealer_id: ins.data!.id };
+    }
+
+    case "location.save": {
+      const all = await db.from("fittings_locations").select("*").eq("kind", "store");
+      if (all.error) fail("Locations aren't set up yet.");
+      const others = ((all.data ?? []) as Array<Record<string, unknown>>).map(normalizeLocation);
+      const locId = isId(a.location_id) ? (a.location_id as string) : "";
+      const row = {
+        dealer_id: isId(a.dealer_id) ? (a.dealer_id as string) : "",
+        name: str(a.name, 60).trim(),
+        code: normCode(str(a.code, 12)),
+        city: str(a.city, 50).trim(),
+        state: str(a.state, 2).toUpperCase(),
+        zip: str(a.zip, 5),
+        ships: a.ships !== false,
+        pickup: a.pickup !== false,
+        active: a.active !== false,
+        sort: int(a.sort) ?? (locId ? others.find((o) => o.id === locId)?.sort ?? 0 : others.length),
+      };
+      const problem = locationProblem({ ...row, id: locId }, others);
+      if (problem) fail(problem);
+      let savedId = locId;
+      if (locId) {
+        const cur = others.find((o) => o.id === locId);
+        if (!cur) fail("That location is gone. Reload the page.");
+        await must(db.from("fittings_locations").update(row).eq("id", locId).eq("kind", "store"));
+      } else {
+        const ins = await db.from("fittings_locations").insert({ ...row, kind: "store" }).select("id").single();
+        if (ins.error) fail(ins.error.message);
+        savedId = ins.data!.id as string;
+      }
+      if (a.make_default === true) await must(db.from(T.settings).update({ default_location_id: savedId }).eq("id", 1));
+      return { location_id: savedId };
+    }
+
     case "stock.history": {
       const { data, error } = await db
         .from("fittings_stock_moves")
-        .select("id, delta, qty_after, kind, order_id, note, created_at")
+        .select("*")
         .eq("product_id", id)
         .order("id", { ascending: false })
         .limit(50);

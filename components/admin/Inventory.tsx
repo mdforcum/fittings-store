@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import type { AdminData, Cost, StockMove } from "@/lib/admin-types";
+import { NO_PLACES, countsLine, type Places } from "@/lib/places";
 import {
   TYPES,
   adminStatus,
@@ -140,6 +141,7 @@ export default function Inventory({ data, act, say, reload }: Props) {
             p={p}
             cost={data.costs[p.id]}
             held={data.held?.[p.id] ?? 0}
+            places={data.places ?? NO_PLACES}
             act={act}
             say={say}
             onEdit={() => setEditing(p.id)}
@@ -158,6 +160,7 @@ export default function Inventory({ data, act, say, reload }: Props) {
           key={stockOf}
           product={data.products.find((p) => p.id === stockOf)!}
           held={data.held?.[stockOf] ?? 0}
+          places={data.places ?? NO_PLACES}
           act={act}
           say={say}
           onClose={() => setStockOf(null)}
@@ -182,6 +185,7 @@ function Row({
   p,
   cost,
   held,
+  places,
   act,
   say,
   onEdit,
@@ -190,11 +194,14 @@ function Row({
   p: Product;
   cost: Cost | undefined;
   held: number;
+  places: Places;
   act: Act;
   say: Say;
   onEdit: () => void;
   onStock: () => void;
 }) {
+  const many = places.locations.length > 1;
+  const home = places.locations.find((l) => l.id === places.default_location_id) ?? places.locations[0];
   const c = cost?.cost_cents ?? null;
   const price = p.price_cents;
   const shownMargin = c && c > 0 && price && price > 0 ? marginFrom(c, price) : (cost?.margin ?? null);
@@ -286,15 +293,22 @@ function Row({
             id={`qty-${p.id}`}
             inputMode="numeric"
             autoComplete="off"
-            aria-label={`Quantity on hand, ${p.name}`}
+            aria-label={many ? `Total on hand at all locations, ${p.name}. Recount a location in Stock.` : `Quantity on hand, ${p.name}`}
             defaultValue={p.qty}
-            onBlur={saveQty}
+            readOnly={many}
+            onBlur={many ? undefined : saveQty}
             onKeyDown={blurOnEnter}
           />
           <button type="button" aria-label={`Add one ${p.name}`} onClick={() => act("qty.adjust", { id: p.id, delta: 1 })}>
             +
           </button>
         </div>
+        {many && (
+          <span className="where-note">
+            {countsLine(places.onhand[p.id], places.locations) || "None at any location"}
+            {home ? ` · − and + change ${home.code || home.name}` : ""}
+          </span>
+        )}
         {held > 0 && (
           <span className="held-note">
             {held} in checkout · {Math.max(0, p.qty - held)} free to sell
@@ -615,27 +629,40 @@ const MOVE_LABEL: Record<StockMove["kind"], string> = {
   edit: "Changed",
   sale: "Sold",
   return: "Returned",
+  transfer: "Moved",
 };
 
-/** An item's stock: what moved it and when, and a way to log a shipment that came in. */
+/**
+ * An item's stock: its count at each location, what moved it and when, and
+ * forms to log a shipment, recount a location, or move parts between them.
+ */
 function StockHistory({
   product,
   held,
+  places,
   act,
   say,
   onClose,
 }: {
   product: Product;
   held: number;
+  places: Places;
   act: Act;
   say: Say;
   onClose: () => void;
 }) {
   const [moves, setMoves] = useState<StockMove[] | null>(null);
   const [numbers, setNumbers] = useState<Record<string, number>>({});
+  const locations = places.locations;
+  const many = locations.length > 1;
+  const home = places.default_location_id ?? locations[0]?.id ?? "";
   const [qty, setQty] = useState("");
   const [note, setNote] = useState("");
+  const [rcvAt, setRcvAt] = useState(home);
+  const [mv, setMv] = useState({ qty: "", from: "", to: "" });
   const [busy, setBusy] = useState(false);
+  const counts = places.onhand[product.id] ?? {};
+  const placeName = (id: string | null) => (id ? (locations.find((l) => l.id === id)?.name ?? "") : "");
 
   const [version, setVersion] = useState(0);
   const load = () => setVersion((v) => v + 1);
@@ -656,12 +683,43 @@ function StockHistory({
     const n = Number(qty.trim());
     if (!Number.isInteger(n) || n < 1) return say("Enter how many came in, 1 or more.", true);
     setBusy(true);
-    const done = await act("qty.adjust", { id: product.id, delta: n, kind: "receive", note });
+    const done = await act("qty.adjust", { id: product.id, delta: n, kind: "receive", note, ...(rcvAt ? { location_id: rcvAt } : {}) });
     setBusy(false);
     if (done) {
-      say(`Added ${n} to ${product.name}`);
+      say(`Added ${n} to ${product.name}${many ? ` at ${placeName(rcvAt)}` : ""}`);
       setQty("");
       setNote("");
+      load();
+    }
+  }
+
+  async function recount(locationId: string, e: React.FocusEvent<HTMLInputElement>) {
+    const n = Number(e.target.value.trim());
+    const was = counts[locationId] ?? 0;
+    if (e.target.value.trim() === "" || !Number.isInteger(n) || n < 0) {
+      e.target.value = String(was);
+      return say("Quantity must be a whole number, 0 or more.", true);
+    }
+    if (n === was) return;
+    const done = await act("qty.count", { id: product.id, qty: n, location_id: locationId });
+    if (done) {
+      say(`${placeName(locationId)} recounted: ${n}`);
+      load();
+    }
+  }
+
+  async function transfer(e: React.FormEvent) {
+    e.preventDefault();
+    const n = Number(mv.qty.trim());
+    if (!Number.isInteger(n) || n < 1) return say("Enter how many to move, 1 or more.", true);
+    if (!mv.from || !mv.to) return say("Pick where the parts are and where they go.", true);
+    if (mv.from === mv.to) return say("Pick two different locations.", true);
+    setBusy(true);
+    const done = await act("qty.transfer", { id: product.id, qty: n, from: mv.from, to: mv.to });
+    setBusy(false);
+    if (done) {
+      say(`Moved ${n} from ${placeName(mv.from)} to ${placeName(mv.to)}`);
+      setMv({ qty: "", from: "", to: "" });
       load();
     }
   }
@@ -672,7 +730,7 @@ function StockHistory({
   return (
     <Modal open onClose={onClose} title={`Stock: ${product.name}`}>
       <p className="stock-now">
-        <b>{product.qty}</b> on the shelf
+        <b>{product.qty}</b> on the shelf{many ? " in all" : ""}
         {held > 0 && (
           <>
             {" "}
@@ -680,6 +738,31 @@ function StockHistory({
           </>
         )}
       </p>
+      {many && (
+        <div className="stock-places">
+          <h3>By location</h3>
+          <ul>
+            {locations.map((l) => (
+              <li key={`${l.id}-${counts[l.id] ?? 0}`}>
+                <label htmlFor={`cnt-${l.id}`}>
+                  {l.name}
+                  {l.id === home && <span className="hint"> (default)</span>}
+                </label>
+                <input
+                  id={`cnt-${l.id}`}
+                  inputMode="numeric"
+                  autoComplete="off"
+                  aria-label={`Count at ${l.name}`}
+                  defaultValue={counts[l.id] ?? 0}
+                  onBlur={(e) => recount(l.id, e)}
+                  onKeyDown={blurOnEnter}
+                />
+              </li>
+            ))}
+          </ul>
+          <p className="hint">Type a new number to log a recount at that location.</p>
+        </div>
+      )}
       <form className="form stock-receive" onSubmit={receive}>
         <h3>A shipment came in</h3>
         <div className="two">
@@ -687,22 +770,70 @@ function StockHistory({
             How many
             <input id="rcv-qty" inputMode="numeric" autoComplete="off" value={qty} onChange={(e) => setQty(e.target.value)} />
           </label>
-          <label htmlFor="rcv-note">
-            Note (optional)
-            <input
-              id="rcv-note"
-              maxLength={200}
-              autoComplete="off"
-              placeholder="Supplier, PO or packing slip"
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-            />
-          </label>
+          {many ? (
+            <label htmlFor="rcv-at">
+              Where
+              <select id="rcv-at" value={rcvAt} onChange={(e) => setRcvAt(e.target.value)}>
+                {locations.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
         </div>
+        <label htmlFor="rcv-note">
+          Note (optional)
+          <input
+            id="rcv-note"
+            maxLength={200}
+            autoComplete="off"
+            placeholder="Supplier, PO or packing slip"
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+          />
+        </label>
         <button type="submit" className="btn" disabled={busy}>
-          {busy ? "Adding…" : "Add to stock"}
+          {busy ? "Saving…" : "Add to stock"}
         </button>
       </form>
+      {many && (
+        <form className="form stock-receive" onSubmit={transfer}>
+          <h3>Move parts between locations</h3>
+          <div className="three">
+            <label htmlFor="mv-qty">
+              How many
+              <input id="mv-qty" inputMode="numeric" autoComplete="off" value={mv.qty} onChange={(e) => setMv({ ...mv, qty: e.target.value })} />
+            </label>
+            <label htmlFor="mv-from">
+              From
+              <select id="mv-from" value={mv.from} onChange={(e) => setMv({ ...mv, from: e.target.value })}>
+                <option value="">Pick one</option>
+                {locations.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.name} ({counts[l.id] ?? 0})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label htmlFor="mv-to">
+              To
+              <select id="mv-to" value={mv.to} onChange={(e) => setMv({ ...mv, to: e.target.value })}>
+                <option value="">Pick one</option>
+                {locations.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <button type="submit" className="btn" disabled={busy}>
+            {busy ? "Saving…" : "Move parts"}
+          </button>
+        </form>
+      )}
       <h3>History</h3>
       {moves === null ? (
         <p className="hint">Loading…</p>
@@ -715,11 +846,14 @@ function StockHistory({
               <span className="when">{when(m.created_at)}</span>
               <span className="what">
                 {MOVE_LABEL[m.kind] ?? m.kind}
+                {many && m.location_id ? ` · ${placeName(m.location_id) || "a location no longer listed"}` : ""}
                 {m.order_id && numbers[m.order_id] ? ` · order #${numbers[m.order_id]}` : ""}
                 {m.note ? ` · ${m.note}` : ""}
               </span>
               <span className={m.delta < 0 ? "delta out" : "delta in"}>{m.delta > 0 ? `+${m.delta}` : m.delta}</span>
-              <span className="after">{m.qty_after} left</span>
+              <span className="after">
+                {m.qty_after} {many && m.location_id ? "there" : "left"}
+              </span>
             </li>
           ))}
         </ol>

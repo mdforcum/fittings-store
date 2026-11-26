@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { PickPart, PickRoute, PickStop } from "@/lib/picking";
 
 type TicketOrder = { id: string; number: number; status: string; customer_name: string | null; ship_method: string; notes: string };
-type Ticket = { orders: TicketOrder[]; route: PickRoute; marks_ready: boolean; mapped: boolean };
+type Ticket = { orders: TicketOrder[]; route: PickRoute & { places?: string[] }; marks_ready: boolean; mapped: boolean };
 
 const REFRESH_MS = 30_000;
 
@@ -90,6 +90,11 @@ export default function PickTicket({ orders }: { orders: string }) {
               </li>
             ))}
           </ul>
+          {(route.places?.length ?? 0) > 1 && (
+            <p className="pick-from">
+              Pull from {route.places!.length} locations: {route.places!.join(", ")}. Each has its own walk below.
+            </p>
+          )}
         </div>
         <div className="pick-actions">
           <p className="pick-count" aria-live="polite">

@@ -1,5 +1,6 @@
 // Shapes shared by the back-end API and the back-end screens.
 import type { Product, Settings } from "./catalog";
+import type { Allocation, Places } from "./places";
 
 export type ShipFrom = {
   name: string;
@@ -86,6 +87,8 @@ export type Order = {
   ship_method: "parcel" | "pickup";
   /** Cores and other charges; empty on orders from before they existed. */
   charges: OrderCharge[];
+  /** Which location each item was taken from when it was paid; empty before locations. */
+  from: Allocation[];
 };
 
 export type CoreReturn = {
@@ -149,6 +152,8 @@ export type AdminData = {
   integrations: { stripe: Mode; webhook: boolean; shippo: Mode };
   /** Parts sitting in shoppers' checkouts right now, by item. */
   held: Record<string, number>;
+  /** Dealers, their store locations and each item's count at each. */
+  places: Places;
 };
 
 /** One line of an item's stock history. */
@@ -156,8 +161,10 @@ export type StockMove = {
   id: number;
   delta: number;
   qty_after: number;
-  kind: "start" | "receive" | "count" | "adjust" | "edit" | "sale" | "return";
+  kind: "start" | "receive" | "count" | "adjust" | "edit" | "sale" | "return" | "transfer";
   order_id: string | null;
+  /** Null on lines from before locations. */
+  location_id: string | null;
   note: string;
   created_at: string;
 };

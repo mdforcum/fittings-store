@@ -5,7 +5,8 @@
 // POST {action:"pick.mark", parts:[{order_item_id, product_id}], picked}
 //                             check parts off (all of what each line needs) or back on
 import { isAdmin, sameOrigin } from "@/lib/auth";
-import { expandParts, routeParts, type PickKitItem, type PickMark, type PickOrderItem, type PickProduct } from "@/lib/picking";
+import { byLocationOrder, normalizeLocation, pickLocation, type Allocation } from "@/lib/places";
+import { expandParts, routeByPlace, type PickKitItem, type PickMark, type PickOrderItem, type PickProduct } from "@/lib/picking";
 import { adminDb, json } from "@/lib/server";
 import type { Spot } from "@/lib/shelf";
 
@@ -64,7 +65,14 @@ async function load(orderIds: string[]) {
   const marksReady = !missing(mk.error);
   if (mk.error && marksReady) throw new Error(mk.error.message);
   const marks = mk.error ? [] : ((mk.data ?? []) as PickMark[]).map((m) => ({ ...m, order_item_id: Number(m.order_item_id) }));
-  return { orders, items, products, kitItems, spots, marks, marksReady };
+  // Where each order's items are pulled (per location), once locations exist.
+  const al = ids.length
+    ? await db.from("fittings_allocations").select("order_id, product_id, location_id, qty").in("order_id", ids)
+    : { data: [], error: null };
+  const allocations = al.error ? [] : ((al.data ?? []) as Allocation[]);
+  const lo = allocations.length ? await db.from("fittings_locations").select("*").eq("kind", "store") : { data: [], error: null };
+  const places = lo.error ? [] : ((lo.data ?? []) as Array<Record<string, unknown>>).map(normalizeLocation).sort(byLocationOrder);
+  return { orders, items, products, kitItems, spots, marks, marksReady, allocations, places };
 }
 
 function parseIds(raw: string | null): string[] | null {
@@ -80,7 +88,18 @@ export async function GET(req: Request) {
   try {
     const d = await load(ids);
     if (!d.orders.length) return bad("None of those orders are paid and waiting.", 404);
-    const route = routeParts(expandParts(d.items, d.products, d.kitItems, d.marks), d.products, d.spots);
+    // A part is pulled where its order line was taken from (a kit's parts with the kit).
+    const lineOf = new Map(d.items.map((i) => [i.id, i]));
+    const route = routeByPlace(
+      expandParts(d.items, d.products, d.kitItems, d.marks),
+      d.products,
+      d.spots,
+      (part) => {
+        const line = lineOf.get(part.order_item_id);
+        return line ? pickLocation(d.allocations, line.order_id, line.product_id) : null;
+      },
+      d.places,
+    );
     return json({
       ok: true,
       orders: d.orders

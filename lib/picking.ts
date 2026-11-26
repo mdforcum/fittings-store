@@ -194,3 +194,39 @@ export function routeParts(parts: PickPart[], products: PickProduct[], spots: Sp
     done: all.filter((s) => s.done).length,
   };
 }
+
+/**
+ * The walk when a batch is pulled from more than one store location: one walk
+ * per location, in location order, each heading starting with the location.
+ * `placeOf` says where each part is pulled (null: not assigned, listed last).
+ * With one location or none it is the plain walk.
+ */
+export function routeByPlace(
+  parts: PickPart[],
+  products: PickProduct[],
+  spots: Spot[],
+  placeOf: (part: PickPart) => string | null,
+  places: Array<{ id: string; name: string }>,
+): PickRoute & { places: string[] } {
+  const byPlace = new Map<string | null, PickPart[]>();
+  for (const part of parts) {
+    const at = placeOf(part);
+    byPlace.set(at, [...(byPlace.get(at) ?? []), part]);
+  }
+  const used = places.filter((p) => byPlace.has(p.id));
+  if (used.length <= 1) {
+    return { ...routeParts(parts, products, spots), places: used.map((p) => p.name) };
+  }
+  const order: Array<{ id: string | null; name: string }> = [...used];
+  for (const id of byPlace.keys()) if (!order.some((p) => p.id === id)) order.push({ id, name: "Location not assigned" });
+  const out: PickRoute & { places: string[] } = { groups: [], total: 0, picked: 0, lines: 0, done: 0, places: used.map((p) => p.name) };
+  for (const place of order) {
+    const r = routeParts(byPlace.get(place.id) ?? [], products, spots);
+    out.groups.push(...r.groups.map((g) => ({ ...g, heading: `${place.name}: ${g.heading}` })));
+    out.total += r.total;
+    out.picked += r.picked;
+    out.lines += r.lines;
+    out.done += r.done;
+  }
+  return out;
+}

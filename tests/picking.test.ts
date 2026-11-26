@@ -123,3 +123,33 @@ test("with no shelf map at all, everything is one list by name", () => {
     ["JIC cap", "JIC tee"],
   );
 });
+
+test("a batch from two locations is two walks, one per location", async () => {
+  const { routeByPlace } = await import("../lib/picking.ts");
+  const products = [
+    { id: "tee", name: "Tee", part_number: "T", spot_id: null },
+    { id: "cap", name: "Cap", part_number: "C", spot_id: null },
+  ];
+  const items = [
+    { id: 1, order_id: "o1", order_number: 1001, product_id: "tee", name: "Tee", part_number: "T", qty: 1 },
+    { id: 2, order_id: "o2", order_number: 1002, product_id: "tee", name: "Tee", part_number: "T", qty: 2 },
+    { id: 3, order_id: "o2", order_number: 1002, product_id: "cap", name: "Cap", part_number: "C", qty: 1 },
+  ];
+  const parts = expandParts(items, products, [], []);
+  const at: Record<string, string> = { o1: "eff", o2: "main" };
+  const places = [{ id: "main", name: "Main shop" }, { id: "eff", name: "Effingham" }];
+  const r = routeByPlace(parts, products, [], (p) => at[p.order_id], places);
+  assert.deepEqual(r.places, ["Main shop", "Effingham"]);
+  assert.deepEqual(
+    r.groups.map((g) => [g.heading, g.stops.map((s) => `${s.name} ×${s.qty}`)]),
+    [
+      ["Main shop: Not on the shelf map", ["Cap ×1", "Tee ×2"]],
+      ["Effingham: Not on the shelf map", ["Tee ×1"]],
+    ],
+  );
+  assert.equal(r.total, 4);
+  assert.equal(r.lines, 3, "the tee is a stop at each location");
+  const one = routeByPlace(parts, products, [], () => "main", places);
+  assert.deepEqual(one.places, ["Main shop"]);
+  assert.equal(one.groups[0].heading, "Not on the shelf map", "one location: no prefix");
+});
