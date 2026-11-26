@@ -386,3 +386,17 @@ dialog.sheet { margin: 0 0 0 auto; width: min(440px, 100%); max-width: 100%; hei
 .mc-matches, .mc-runs { list-style: none; display: grid; gap: 6px; }
 .mc-matches li, .mc-runs li { display: grid; gap: 2px; padding: 8px 10px; border: 1px solid var(--rule); border-radius: 3px; background: var(--surface); }
 .mc-runs { max-height: 320px; overflow: auto; }
+
+/* Browse: machine button, search reasons, fit pills, machine picker */
+.mybtn { border: 1px solid rgba(255,255,255,.35); background: transparent; color: inherit; font: inherit; font-weight: 600; padding: 6px 10px; border-radius: 3px; cursor: pointer; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.because { font-size: .82rem; color: var(--ok, #2e7d32); font-weight: 600; }
+.tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.fitline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.mp { display: grid; gap: 14px; }
+.mp h3 { font: 700 .95rem/1.2 var(--body); }
+.mp-saved, .mp-list { list-style: none; display: grid; gap: 6px; }
+.mp-saved li { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.mp-saved label { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.mp-list { max-height: 340px; overflow: auto; }
+.mp-row { width: 100%; text-align: left; display: grid; gap: 2px; padding: 10px 12px; border: 1px solid var(--rule); border-radius: 3px; background: var(--surface); cursor: pointer; font: inherit; color: inherit; }
+.mp-row:hover, .mp-row:focus-visible { border-color: var(--ink); }

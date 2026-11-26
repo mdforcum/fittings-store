@@ -1,7 +1,8 @@
 // Public: which machine a serial number belongs to.
 // GET ?serial=<serial or 17-character PIN>[&machine=<machine id>]
+// GET ?list=1 gives the lineup for the shop's machine picker.
 // Answers machines and build years only; the serial tables themselves stay private.
-import { SchemaMissing, lookupSerial } from "@/lib/foundation-server";
+import { SchemaMissing, loadMachines, lookupSerial } from "@/lib/foundation-server";
 import { matchSentence } from "@/lib/serials";
 import { adminDb, json } from "@/lib/server";
 
@@ -9,6 +10,21 @@ export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
   const params = new URL(req.url).searchParams;
+  if (params.get("list")) {
+    try {
+      const machines = await loadMachines(adminDb());
+      return Response.json(
+        {
+          ok: true,
+          machines: machines.map((m) => ({ id: m.id, make: m.make, kind: m.kind, series: m.series, model: m.model, year_from: m.year_from, year_to: m.year_to })),
+        },
+        { headers: { "Cache-Control": "public, max-age=300" } },
+      );
+    } catch (e) {
+      console.error("machine list failed", e);
+      return json({ ok: false, message: "The machine list could not be loaded." }, 500);
+    }
+  }
   const serial = (params.get("serial") ?? "").slice(0, 40);
   const machine = (params.get("machine") ?? "").slice(0, 40);
   if (!serial.trim()) return json({ ok: false, message: "Type the serial number from the machine's plate." }, 400);

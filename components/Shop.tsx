@@ -1,7 +1,27 @@
 "use client";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  EMPTY_GARAGE,
+  addToGarage,
+  conditionLabel,
+  fitState,
+  readGarage,
+  removeFromGarage,
+  searchProducts,
+  shopNav,
+  underCategory,
+  warrantyText,
+  type FitState,
+  type Garage,
+  type MyMachine,
+  type NavNode,
+  type ShopFit,
+  type ShopXref,
+} from "@/lib/browse";
+import type { Category } from "@/lib/foundation";
+import MachinePicker from "./MachinePicker";
 import { useCart, writeCart } from "@/lib/cart";
 import {
   TYPES,
@@ -16,9 +36,32 @@ import {
 } from "@/lib/catalog";
 import { Modal, Picture, Toast, type ToastState } from "./ui";
 
-type Props = { products: Product[]; settings: Settings; ok: boolean; openCart: boolean };
+type Props = {
+  products: Product[];
+  settings: Settings;
+  ok: boolean;
+  openCart: boolean;
+  categories?: Category[];
+  xrefs?: Record<string, ShopXref[]>;
+  fits?: Record<string, ShopFit[]>;
+};
 
-export default function Shop({ products, settings, ok, openCart }: Props) {
+const GARAGE_KEY = "my-machines";
+
+/** The shelves to offer as chips: the deepest branches that hold items. */
+function shelves(nav: NavNode[]): NavNode[] {
+  return nav.flatMap((n) => (n.children.length ? shelves(n.children) : [n]));
+}
+
+function FitPill({ state, label }: { state: FitState; label: string }) {
+  if (state.kind === "unknown") return null;
+  if (state.kind === "universal") return <span className="pill muted">Fits by spec</span>;
+  if (state.kind === "fits") return <span className="pill ok">Fits your {label}</span>;
+  if (state.kind === "checkSerial") return <span className="pill hold">Check your serial</span>;
+  return <span className="pill bad">Not listed for your {label}</span>;
+}
+
+export default function Shop({ products, settings, ok, openCart, categories = [], xrefs = {}, fits = {} }: Props) {
   const router = useRouter();
   const cart = useCart();
   const [q, setQ] = useState("");
@@ -30,6 +73,32 @@ export default function Shop({ products, settings, ok, openCart }: Props) {
   const [busy, setBusy] = useState(false);
   const [checkoutError, setCheckoutError] = useState<{ text: string; contact: boolean } | null>(null);
   const gallery = useRef<HTMLDivElement>(null);
+  const [shelf, setShelf] = useState("all");
+  const [condition, setCondition] = useState("all");
+  const [fitsOnly, setFitsOnly] = useState(false);
+  const [garage, setGarage] = useState<Garage>(EMPTY_GARAGE);
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  // The customer's machines live in this browser; read them after the first paint.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      try {
+        setGarage(readGarage(window.localStorage.getItem(GARAGE_KEY)));
+      } catch {
+        /* storage blocked: the shop works without it */
+      }
+    }, 0);
+    return () => clearTimeout(t);
+  }, []);
+  const keepGarage = useCallback((g: Garage) => {
+    setGarage(g);
+    try {
+      window.localStorage.setItem(GARAGE_KEY, JSON.stringify(g));
+    } catch {
+      /* not kept past this visit */
+    }
+  }, []);
+  const mine: MyMachine | null = garage.machines.find((m) => m.id === garage.active) ?? null;
 
   const byId = useMemo(() => new Map(products.map((p) => [p.id, p])), [products]);
   const say = useCallback((text: string, bad = false) => setToast({ text, bad, at: Date.now() }), []);
@@ -104,17 +173,35 @@ export default function Shop({ products, settings, ok, openCart }: Props) {
     setBusy(false);
   }
 
-  const needle = q.trim().toLowerCase();
-  const shown = products.filter((p) => {
-    if (filter !== "all" && p.type !== filter) return false;
+  const xrefMap = useMemo(() => new Map(Object.entries(xrefs)), [xrefs]);
+  const nav = useMemo(() => shopNav(categories, products), [categories, products]);
+  const shelfList = useMemo(() => shelves(nav), [nav]);
+  const shelfIds = useMemo(() => (shelf === "all" ? null : underCategory(shelf, categories)), [shelf, categories]);
+  const fitOf = (p: Product) => fitState(p, fits[p.id] ?? [], mine?.id ?? null, mine?.serial ?? "");
+  const anyFitment = Object.keys(fits).length > 0 || products.some((p) => p.universal);
+  const conditions = [...new Set(products.map((p) => p.condition))];
+  const searching = q.trim().length > 0;
+  const hits = searchProducts(products, xrefMap, q).filter(({ product: p }) => {
+    if (nav.length ? shelfIds && !shelfIds.has(p.category_id ?? "") : filter !== "all" && p.type !== filter) return false;
+    if (condition !== "all" && p.condition !== condition) return false;
     if (instock && !sellable(p)) return false;
-    if (!needle) return true;
-    return [p.name, p.part_number, p.thread, p.size, p.dash, typeOf(p.type).label]
-      .join(" ")
-      .toLowerCase()
-      .includes(needle);
+    if (fitsOnly && mine && !["fits", "universal", "checkSerial"].includes(fitOf(p).kind)) return false;
+    return true;
   });
+  const because = new Map(hits.map((h) => [h.product.id, h.because]));
+  const shown = hits.map((h) => h.product);
   const present = TYPES.filter((t) => products.some((p) => p.type === t.id));
+  const catName = new Map(categories.map((c) => [c.id, c.name]));
+  // Without a search, items stand on their shelves; with one, in order of how well they match.
+  const groups: Array<{ key: string; title: string; items: Product[] }> = searching
+    ? [{ key: "results", title: "Results", items: shown }]
+    : nav.length
+      ? [...shelfList.map((n) => n.id), "__none"].map((id) => ({
+          key: id,
+          title: id === "__none" ? "More parts" : (catName.get(id) ?? id),
+          items: shown.filter((p) => (id === "__none" ? !shelfList.some((n) => n.id === p.category_id) : p.category_id === id)),
+        }))
+      : TYPES.map((t) => ({ key: t.id, title: t.plural, items: shown.filter((p) => p.type === t.id) }));
   const detail = detailId ? byId.get(detailId) : undefined;
   const step = (d: number) => gallery.current?.scrollBy({ left: d * gallery.current.clientWidth, behavior: "smooth" });
 
@@ -142,6 +229,16 @@ export default function Shop({ products, settings, ok, openCart }: Props) {
             {settings.store_name}
           </Link>
           <nav aria-label="Store">
+            <button type="button" className="mybtn" onClick={() => setPickerOpen(true)}>
+              {mine ? (
+                <>
+                  <span className="sr">Your machine: </span>
+                  {mine.label}
+                </>
+              ) : (
+                "Pick your machine"
+              )}
+            </button>
             <Link href="/hose">Hose builder</Link>
             <button type="button" className="cartbtn" onClick={() => setCartOpen(true)}>
               Cart <span className="count">{count}</span>
@@ -162,27 +259,46 @@ export default function Shop({ products, settings, ok, openCart }: Props) {
             <input
               type="search"
               id="q"
-              placeholder="Search thread, size or part #"
+              placeholder="Part #, the OEM number it replaces, thread or size"
               autoComplete="off"
               value={q}
               onChange={(e) => setQ(e.target.value)}
             />
-            <div className="chips" role="group" aria-label="Fitting type">
-              <button type="button" className="chip" aria-pressed={filter === "all"} onClick={() => setFilter("all")}>
-                All
-              </button>
-              {present.map((t) => (
-                <button
-                  key={t.id}
-                  type="button"
-                  className="chip"
-                  aria-pressed={filter === t.id}
-                  onClick={() => setFilter(t.id)}
-                >
-                  {t.plural}
+            {nav.length > 0 ? (
+              <div className="chips" role="group" aria-label="Shelf">
+                <button type="button" className="chip" aria-pressed={shelf === "all"} onClick={() => setShelf("all")}>
+                  All
                 </button>
-              ))}
-            </div>
+                {shelfList.map((n) => (
+                  <button key={n.id} type="button" className="chip" aria-pressed={shelf === n.id} onClick={() => setShelf(n.id)}>
+                    {n.name}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="chips" role="group" aria-label="Fitting type">
+                <button type="button" className="chip" aria-pressed={filter === "all"} onClick={() => setFilter("all")}>
+                  All
+                </button>
+                {present.map((t) => (
+                  <button key={t.id} type="button" className="chip" aria-pressed={filter === t.id} onClick={() => setFilter(t.id)}>
+                    {t.plural}
+                  </button>
+                ))}
+              </div>
+            )}
+            {conditions.length > 1 && (
+              <div className="chips" role="group" aria-label="Condition">
+                <button type="button" className="chip" aria-pressed={condition === "all"} onClick={() => setCondition("all")}>
+                  Any condition
+                </button>
+                {conditions.map((c) => (
+                  <button key={c} type="button" className="chip" aria-pressed={condition === c} onClick={() => setCondition(c)}>
+                    {conditionLabel(c)}
+                  </button>
+                ))}
+              </div>
+            )}
             <label className="check" htmlFor="instockOnly">
               <input
                 type="checkbox"
@@ -192,22 +308,30 @@ export default function Shop({ products, settings, ok, openCart }: Props) {
               />{" "}
               In stock only
             </label>
+            {mine && anyFitment && (
+              <label className="check" htmlFor="fitsOnly">
+                <input type="checkbox" id="fitsOnly" checked={fitsOnly} onChange={(e) => setFitsOnly(e.target.checked)} /> Only parts
+                listed for my {mine.label}
+              </label>
+            )}
           </div>
         </div>
 
         {!ok && <p className="empty">The catalog can&apos;t be loaded right now. Please check back shortly.</p>}
         {ok && products.length === 0 && <p className="empty">The catalog is being stocked. Check back soon.</p>}
         {ok && products.length > 0 && shown.length === 0 && (
-          <p className="empty">Nothing matches that search. Try a thread size like 3/4-16 or a part number.</p>
+          <p className="empty">
+            Nothing matches that. Try a part number, the OEM number on the old part, or a thread size like 3/4-16.
+          </p>
         )}
 
-        {TYPES.map((t) => {
-          const items = shown.filter((p) => p.type === t.id);
+        {groups.map((g) => {
+          const items = g.items;
           if (items.length === 0) return null;
           return (
-            <section className="group" key={t.id}>
+            <section className="group" key={g.key}>
               <h2>
-                {t.plural}
+                {g.title}
                 <span>
                   {items.filter((p) => sellable(p)).length} of {items.length} in stock
                 </span>
@@ -216,6 +340,9 @@ export default function Shop({ products, settings, ok, openCart }: Props) {
                 {items.map((p) => {
                   const info = stockInfo(p, settings.low_stock);
                   const live = sellable(p);
+                  const fit = mine ? fitOf(p) : ({ kind: "unknown" } as FitState);
+                  const why = because.get(p.id);
+                  const quote = p.price_mode === "quote";
                   return (
                     <article className={`cell${p.qty <= 0 ? " is-out" : ""}`} key={p.id}>
                       <button
@@ -235,17 +362,32 @@ export default function Shop({ products, settings, ok, openCart }: Props) {
                             Part # <b>{p.part_number}</b>
                           </p>
                         )}
+                        {why && <p className="because">{why}</p>}
+                        {(p.condition !== "new" || mine) && (
+                          <p className="tags">
+                            {p.condition !== "new" && <span className="pill muted">{conditionLabel(p.condition)}</span>}
+                            {mine && <FitPill state={fit} label={mine.label} />}
+                          </p>
+                        )}
                       </div>
                       <div className="buy">
-                        {(p.price_cents ?? 0) > 0 ? (
+                        {quote ? (
+                          <div className="price none">Price on request</div>
+                        ) : (p.price_cents ?? 0) > 0 ? (
                           <div className="price">{money(p.price_cents)}</div>
                         ) : (
                           <div className="price none">Price pending</div>
                         )}
-                        <span className={`pill ${info.tone}`}>{info.text}</span>
-                        <button type="button" className="btn" disabled={!live} onClick={() => add(p)}>
-                          {live ? "Add to cart" : p.qty <= 0 ? "Out of stock" : "Not available yet"}
-                        </button>
+                        {!quote && <span className={`pill ${info.tone}`}>{info.text}</span>}
+                        {quote ? (
+                          <button type="button" className="btn ghost" onClick={() => setDetailId(p.id)}>
+                            Get a price
+                          </button>
+                        ) : (
+                          <button type="button" className="btn" disabled={!live} onClick={() => add(p)}>
+                            {live ? "Add to cart" : p.qty <= 0 ? "Out of stock" : "Not available yet"}
+                          </button>
+                        )}
                       </div>
                     </article>
                   );
@@ -437,7 +579,38 @@ export default function Shop({ products, settings, ok, openCart }: Props) {
                   <dd>{detail.thread}</dd>
                 </>
               )}
+              {detail.brand && (
+                <>
+                  <dt>Brand</dt>
+                  <dd>{detail.brand}</dd>
+                </>
+              )}
+              <dt>Condition</dt>
+              <dd>
+                {conditionLabel(detail.condition)}
+                {detail.warranty_months ? ` · ${warrantyText(detail.warranty_months)}` : ""}
+              </dd>
+              {(xrefs[detail.id] ?? []).length > 0 && (
+                <>
+                  <dt>Replaces</dt>
+                  <dd>
+                    {(xrefs[detail.id] ?? [])
+                      .filter((x) => x.kind !== "supplier")
+                      .map((x) => `${x.brand ? `${x.brand} ` : ""}${x.number}`)
+                      .join(", ") || "—"}
+                  </dd>
+                </>
+              )}
             </dl>
+            {mine && fitOf(detail).kind !== "unknown" && (
+              <p className="fitline">
+                <FitPill state={fitOf(detail)} label={mine.label} />{" "}
+                {(() => {
+                  const f = fitOf(detail);
+                  return f.kind === "checkSerial" || (f.kind === "fits" && f.note) ? f.note : "";
+                })()}
+              </p>
+            )}
             {detail.description && <p>{detail.description}</p>}
             <div className="total">
               <span className={`pill ${stockInfo(detail, settings.low_stock).tone}`}>
@@ -449,12 +622,35 @@ export default function Shop({ products, settings, ok, openCart }: Props) {
                 <span className="hint">Price pending</span>
               )}
             </div>
-            <button type="button" className="btn" disabled={!sellable(detail)} onClick={() => add(detail)}>
-              {sellable(detail) ? "Add to cart" : detail.qty <= 0 ? "Out of stock" : "Not available yet"}
-            </button>
+            {detail.price_mode === "quote" ? (
+              <div className="panel">
+                <p>
+                  <b>Priced by quote.</b> Big components are priced for the job: tell us the machine and serial and we&apos;ll come back with
+                  a price and a delivery date.
+                </p>
+                {(settings.phone || settings.email) && <p>{contact}.</p>}
+              </div>
+            ) : (
+              <button type="button" className="btn" disabled={!sellable(detail)} onClick={() => add(detail)}>
+                {sellable(detail) ? "Add to cart" : detail.qty <= 0 ? "Out of stock" : "Not available yet"}
+              </button>
+            )}
           </>
         )}
       </Modal>
+
+      <MachinePicker
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        garage={garage}
+        onPick={(m) => {
+          keepGarage(addToGarage(garage, m));
+          setPickerOpen(false);
+          say(`Showing fit for your ${m.label}`);
+        }}
+        onSwitch={(id) => keepGarage({ ...garage, active: id })}
+        onRemove={(id) => keepGarage(removeFromGarage(garage, id))}
+      />
 
       <Toast toast={toast} clear={clearToast} />
     </>

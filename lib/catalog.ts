@@ -13,6 +13,13 @@ export type Product = {
   qty: number;
   photos: string[];
   sort: number;
+  // Catalog foundation fields. Absent on old rows: the defaults below apply.
+  category_id: string | null;
+  brand: string;
+  condition: string;
+  universal: boolean;
+  price_mode: "cart" | "quote";
+  warranty_months: number | null;
 };
 
 export type Settings = {
@@ -133,6 +140,12 @@ export function normalizeProduct(row: Record<string, unknown>): Product {
     qty: Math.max(0, Math.floor(n(row.qty) ?? 0)),
     photos: Array.isArray(row.photos) ? row.photos.filter((x): x is string => typeof x === "string") : [],
     sort: n(row.sort) ?? 0,
+    category_id: typeof row.category_id === "string" && row.category_id ? row.category_id : null,
+    brand: s(row.brand),
+    condition: s(row.condition) || "new",
+    universal: row.universal === true,
+    price_mode: row.price_mode === "quote" ? "quote" : "cart",
+    warranty_months: n(row.warranty_months),
   };
 }
 

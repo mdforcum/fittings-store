@@ -8,6 +8,8 @@ import {
   type Product,
   type Settings,
 } from "./catalog";
+import type { ShopFit, ShopXref } from "./browse";
+import type { Category } from "./foundation";
 
 // Pasted values often pick up stray spaces, line breaks or wrapping quotes.
 const clean = (v: string | undefined) =>
@@ -150,4 +152,42 @@ export type { ShipFrom, ParcelPreset } from "./admin-types";
 
 export function json(body: unknown, status = 200): Response {
   return Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
+}
+
+export type ShopCatalog = {
+  products: Product[];
+  settings: Settings;
+  ok: boolean;
+  categories: Category[];
+  xrefs: Record<string, ShopXref[]>;
+  fits: Record<string, ShopFit[]>;
+};
+
+/**
+ * Everything the shop page needs in one read: items, settings, the live
+ * category tree, the numbers each item replaces, and which machines each
+ * fits. The catalog tables are optional: without them the shop still sells.
+ */
+export async function getShopCatalog(): Promise<ShopCatalog> {
+  const base = await getCatalog();
+  const empty = { categories: [], xrefs: {}, fits: {} };
+  const db = publicDb();
+  if (!db || !base.ok) return { ...base, ...empty };
+  const ids = new Set(base.products.map((p) => p.id));
+  const [c, x, f] = await Promise.all([
+    db.from("fittings_categories").select("id, parent_id, name, sort, spec_fields, fitment, default_ship, live, note").eq("live", true),
+    db.from("fittings_xrefs").select("product_id, kind, brand, number, number_norm").limit(20000),
+    db.from("fittings_fitment").select("product_id, machine_id, serial_prefix, serial_from, serial_to, position").limit(20000),
+  ]);
+  const group = <T extends { product_id: string }>(rows: T[] | null) => {
+    const out: Record<string, Array<Omit<T, "product_id">>> = {};
+    for (const { product_id, ...rest } of rows ?? []) if (ids.has(product_id)) (out[product_id] ??= []).push(rest);
+    return out;
+  };
+  return {
+    ...base,
+    categories: c.error ? [] : ((c.data ?? []) as Category[]),
+    xrefs: x.error ? {} : (group(x.data as Array<ShopXref & { product_id: string }>) as Record<string, ShopXref[]>),
+    fits: f.error ? {} : (group(f.data as Array<ShopFit & { product_id: string }>) as Record<string, ShopFit[]>),
+  };
 }
