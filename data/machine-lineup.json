@@ -46466,6 +46466,228 @@
      "source": ""
     }
    ]
+  },
+  {
+   "make": "Case",
+   "kind": "backhoe",
+   "series": "590 series",
+   "model": "590 Turbo",
+   "year_from": 1990,
+   "year_to": 1995,
+   "notes": "K-generation chassis; JJG serials shared with the 580K and 580 Super K. Hercules 2026 Mobile Kit Catalog lists this model.",
+   "source": "https://www.brokentractor.com/p/case-590-turbo-backhoe-loader-specs-serial-number-guide/",
+   "runs": [
+    {
+     "prefix": "JJG",
+     "from": "JJG0205001",
+     "to": "JJG0205007",
+     "year": 1990,
+     "note": "Pilot units.",
+     "confidence": "seller",
+     "source": "https://www.brokentractor.com/p/case-590-turbo-backhoe-loader-specs-serial-number-guide/"
+    },
+    {
+     "prefix": "JJG",
+     "from": "JJG0205008",
+     "to": "JJG0206405",
+     "year": 1991,
+     "note": "",
+     "confidence": "seller",
+     "source": "https://www.brokentractor.com/p/case-590-turbo-backhoe-loader-specs-serial-number-guide/"
+    },
+    {
+     "prefix": "JJG",
+     "from": "JJG0206406",
+     "to": "JJG0206700",
+     "year": 1992,
+     "note": "",
+     "confidence": "seller",
+     "source": "https://www.brokentractor.com/p/case-590-turbo-backhoe-loader-specs-serial-number-guide/"
+    },
+    {
+     "prefix": "JJG",
+     "from": "JJG0206701",
+     "to": "JJG0207313",
+     "year": 1993,
+     "note": "",
+     "confidence": "seller",
+     "source": "https://www.brokentractor.com/p/case-590-turbo-backhoe-loader-specs-serial-number-guide/"
+    },
+    {
+     "prefix": "JJG",
+     "from": "JJG0207314",
+     "to": "",
+     "year": 1994,
+     "note": "1994-1995 as published.",
+     "confidence": "seller",
+     "source": "https://www.brokentractor.com/p/case-590-turbo-backhoe-loader-specs-serial-number-guide/"
+    }
+   ]
+  },
+  {
+   "make": "Case",
+   "kind": "backhoe",
+   "series": "590 series",
+   "model": "590 Super L",
+   "year_from": 1995,
+   "year_to": 2001,
+   "notes": "Series I and Series II; no published serial break found yet. Hercules 2026 Mobile Kit Catalog lists this model.",
+   "source": "https://www.brokentractor.com/p/case-590-super-l-backhoe-loader-parts-specs-common-issues-case-590-super-l-backhoe-loader-parts-specs-common-issues/",
+   "runs": []
+  },
+  {
+   "make": "Case",
+   "kind": "backhoe",
+   "series": "590 series",
+   "model": "590 Super M",
+   "year_from": 2001,
+   "year_to": 2008,
+   "notes": "Series I. Hercules 2026 Mobile Kit Catalog lists this model.",
+   "source": "https://www.brokentractor.com/p/case-590-super-m-backhoe-loader-parts-specs-common-issues-case-590-super-m-backhoe-loader-parts-specs-common-issues/",
+   "runs": [
+    {
+     "prefix": "JJG",
+     "from": "JJG0281889",
+     "to": "JJG0374358",
+     "year": 2002,
+     "note": "As published; the range is wide, check the plate.",
+     "confidence": "seller",
+     "source": "https://www.brokentractor.com/p/case-590-super-m-backhoe-loader-parts-specs-common-issues-case-590-super-m-backhoe-loader-parts-specs-common-issues/"
+    },
+    {
+     "prefix": "JJG",
+     "from": "JJG0374359",
+     "to": "JJG0377102",
+     "year": 2003,
+     "note": "",
+     "confidence": "seller",
+     "source": "https://www.brokentractor.com/p/case-590-super-m-backhoe-loader-parts-specs-common-issues-case-590-super-m-backhoe-loader-parts-specs-common-issues/"
+    },
+    {
+     "prefix": "JJG",
+     "from": "JJG0377103",
+     "to": "",
+     "year": 2004,
+     "note": "",
+     "confidence": "seller",
+     "source": "https://www.brokentractor.com/p/case-590-super-m-backhoe-loader-parts-specs-common-issues-case-590-super-m-backhoe-loader-parts-specs-common-issues/"
+    }
+   ]
+  },
+  {
+   "make": "Case",
+   "kind": "backhoe",
+   "series": "590 series",
+   "model": "590 Super M Series II",
+   "year_from": 2003,
+   "year_to": 2007,
+   "notes": "Serials move from JJG to N-series during 2004. Hercules 2026 Mobile Kit Catalog lists this model.",
+   "source": "https://www.brokentractor.com/p/case-590-super-m-backhoe-loader-parts-specs-common-issues-case-590-super-m-backhoe-loader-parts-specs-common-issues/",
+   "runs": [
+    {
+     "prefix": "JJG",
+     "from": "JJG0288402",
+     "to": "JJG0288458",
+     "year": 2003,
+     "note": "",
+     "confidence": "seller",
+     "source": "https://www.brokentractor.com/p/case-590-super-m-backhoe-loader-parts-specs-common-issues-case-590-super-m-backhoe-loader-parts-specs-common-issues/"
+    },
+    {
+     "prefix": "",
+     "from": "JJG0288459",
+     "to": "N4C309000",
+     "year": 2004,
+     "note": "Numbering changes from JJG to N4C in this run.",
+     "confidence": "seller",
+     "source": "https://www.brokentractor.com/p/case-590-super-m-backhoe-loader-parts-specs-common-issues-case-590-super-m-backhoe-loader-parts-specs-common-issues/"
+    },
+    {
+     "prefix": "",
+     "from": "N4C309001",
+     "to": "",
+     "year": 2005,
+     "note": "2005 and later.",
+     "confidence": "seller",
+     "source": "https://www.brokentractor.com/p/case-590-super-m-backhoe-loader-parts-specs-common-issues-case-590-super-m-backhoe-loader-parts-specs-common-issues/"
+    }
+   ]
+  },
+  {
+   "make": "Case",
+   "kind": "backhoe",
+   "series": "590 series",
+   "model": "590 Super M Series 3",
+   "year_from": 2007,
+   "year_to": 2008,
+   "notes": "Tier III Family IV engine; replaced by the 590 Super N. Hercules 2026 Mobile Kit Catalog lists this model.",
+   "source": "",
+   "runs": []
+  },
+  {
+   "make": "Case",
+   "kind": "backhoe",
+   "series": "580 series",
+   "model": "580 Super M",
+   "year_from": 2001,
+   "year_to": 2008,
+   "notes": "Turbocharged sibling of the 580M. Series I (Cummins 4B/4BT) before N4C304000; Series II (Iveco) N4C304000 to N8C508000; Series III after N8C508000. Hercules 2026 Mobile Kit Catalog lists this model.",
+   "source": "https://brokentractor.com/p/case-580-super-m-backhoe-information-580sm",
+   "runs": [],
+   "serial_breaks": [
+    {
+     "serial": "N4C304000",
+     "note": "Series II begins: Iveco engine"
+    },
+    {
+     "serial": "N8C508000",
+     "note": "Series III begins: Tier III engine"
+    }
+   ]
+  },
+  {
+   "make": "Case",
+   "kind": "backhoe",
+   "series": "580 series",
+   "model": "580 Super M+ Series 3",
+   "year_from": 2008,
+   "year_to": 2011,
+   "notes": "Higher-capacity Super M+ in the M Series 3 line. Hercules 2026 Mobile Kit Catalog lists this model.",
+   "source": "",
+   "runs": []
+  },
+  {
+   "make": "Case",
+   "kind": "backhoe",
+   "series": "580 series",
+   "model": "580M Series 3",
+   "year_from": 2007,
+   "year_to": 2008,
+   "notes": "M Series 3 (Tier III). The 580 Super M's Series III starts at N8C508000; confirm the 580M break against a plate.",
+   "source": "https://brokentractor.com/p/case-580-super-m-backhoe-information-580sm",
+   "runs": []
+  },
+  {
+   "make": "Case",
+   "kind": "backhoe",
+   "series": "590 series",
+   "model": "590 Super N",
+   "year_from": 2008,
+   "year_to": null,
+   "notes": "Tier 3 about 2008-2011, Tier 4 Interim about 2011-2014, Tier 4 Final 2014 on (3.4L FPT). Prefixes vary by plant and year. Hercules 2026 Mobile Kit Catalog lists this model.",
+   "source": "https://www.brokentractor.com/p/case-590-super-n-loader-backhoe-specs-parts-serial-number-info-case-590supern-loaderbackhoe-specs/",
+   "runs": []
+  },
+  {
+   "make": "Case",
+   "kind": "backhoe",
+   "series": "590 series",
+   "model": "590SR Super R",
+   "year_from": null,
+   "year_to": null,
+   "notes": "Listed in the Hercules catalog with Tier 2 and Tier 3 versions; years and serials not found yet.",
+   "source": "",
+   "runs": []
   }
  ]
 }
