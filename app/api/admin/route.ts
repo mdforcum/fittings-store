@@ -9,11 +9,14 @@ import {
   type Cost,
   type Mode,
   type Order,
+  type OrderCharge,
   type ParcelPreset,
+  type QuoteRequest,
   type ShipFrom,
 } from "@/lib/admin-types";
 import { isAdmin, sameOrigin } from "@/lib/auth";
 import {
+  SHIP_ZONES,
   TYPES,
   bySort,
   marginFrom,
@@ -21,6 +24,7 @@ import {
   normalizeSettings,
   priceFromMargin,
 } from "@/lib/catalog";
+import { coreCredit, storeDate } from "@/lib/checkout-rules";
 import { placeByType } from "@/lib/foundation-server";
 import { getStripe } from "@/lib/payments";
 import { T, adminDb, env, getConfig, json, setConfig } from "@/lib/server";
@@ -75,6 +79,23 @@ async function loadData(db: SupabaseClient): Promise<AdminData> {
   const firstError = p.error ?? c.error ?? s.error ?? cfg.error ?? o.error;
   if (firstError) throw new Error(firstError.message);
 
+  // Charges and quotes came later: if their tables are missing the rest of the
+  // back office still loads, with these lists empty.
+  const orderIds = (o.data ?? []).map((r) => r.id as string);
+  const [ch, q] = await Promise.all([
+    orderIds.length
+      ? db.from("fittings_order_charges").select("*, returns:fittings_core_returns(*)").in("order_id", orderIds)
+      : Promise.resolve({ data: [], error: null }),
+    db.from("fittings_quote_requests").select("*").order("created_at", { ascending: false }).limit(200),
+  ]);
+  const chargesBy = new Map<string, OrderCharge[]>();
+  for (const row of ch.error ? [] : (ch.data ?? [])) {
+    const r = row as OrderCharge & { order_id: string };
+    const list = chargesBy.get(r.order_id) ?? [];
+    list.push({ ...r, returns: [...(r.returns ?? [])].sort((a, b) => a.created_at.localeCompare(b.created_at)) });
+    chargesBy.set(r.order_id, list);
+  }
+
   const costs: Record<string, Cost> = {};
   for (const row of c.data ?? []) {
     costs[row.product_id as string] = {
@@ -88,7 +109,13 @@ async function loadData(db: SupabaseClient): Promise<AdminData> {
     costs,
     settings: normalizeSettings(s.data),
     config,
-    orders: (o.data ?? []) as unknown as Order[],
+    orders: ((o.data ?? []) as unknown as Order[]).map((ord) => ({
+      ...ord,
+      charges_cents: ord.charges_cents ?? 0,
+      ship_method: ord.ship_method === "pickup" ? "pickup" : "parcel",
+      charges: (chargesBy.get(ord.id) ?? []).sort((a, b) => a.id - b.id),
+    })),
+    quotes: q.error ? [] : ((q.data ?? []) as QuoteRequest[]),
     integrations: {
       stripe: modeOf(env.stripe, "_live_", "_test_"),
       webhook: webhook || !!process.env.STRIPE_WEBHOOK_SECRET,
@@ -301,6 +328,10 @@ async function run(action: string, a: Payload, db: SupabaseClient, origin: strin
           shipping_flat_cents: cents(s.shipping_flat_cents, "The shipping fee"),
           order_min_cents: cents(s.order_min_cents, "The order minimum"),
           free_ship_over_cents: cents(s.free_ship_over_cents, "The free-shipping amount", true),
+          ship_cutoff: /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/.test(str(s.ship_cutoff, 5))
+            ? str(s.ship_cutoff, 5)
+            : fail("Give the same-day cutoff as a time, like 14:00."),
+          ship_tz: SHIP_ZONES.some((z) => z.id === s.ship_tz) ? s.ship_tz : "America/Chicago",
         }),
       );
       const c = (a.config ?? {}) as Payload;
@@ -351,6 +382,80 @@ async function run(action: string, a: Payload, db: SupabaseClient, origin: strin
         patch.status = "cancelled";
       }
       if (Object.keys(patch).length) await must(db.from(T.orders).update(patch).eq("id", id));
+      return {};
+    }
+
+    case "core.return": {
+      // A core came back: work out the credit by the policy, refund it to the
+      // card, and record it. The idempotency key makes a double tap harmless.
+      const chargeId = int(a.charge_id);
+      const qty = int(a.qty);
+      const on = str(a.returned_on, 10);
+      if (chargeId == null) fail("Pick the core that came back.");
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(on) || Number.isNaN(Date.parse(`${on}T12:00:00Z`))) fail("Give the day the core arrived.");
+      const ch = await db.from("fittings_order_charges").select("*").eq("id", chargeId!).maybeSingle();
+      if (ch.error || !ch.data) fail("That charge was not found.");
+      const charge = ch.data as OrderCharge & { order_id: string };
+      if (charge.kind !== "core") fail("Only core charges are refunded this way.");
+      const left = charge.qty - charge.returned_qty;
+      if (qty == null || qty < 1 || qty > left) fail(left > 0 ? `Between 1 and ${left} can still come back on this line.` : "Every core on this line is already back.");
+      const ord = await db.from(T.orders).select("id, number, paid_at, created_at, stripe_payment_intent, status").eq("id", charge.order_id).maybeSingle();
+      if (ord.error || !ord.data) fail("The order was not found.");
+      const order = ord.data as { id: string; number: number; paid_at: string | null; created_at: string; stripe_payment_intent: string | null; status: string };
+      if (order.status === "cancelled") fail("This order was cancelled. Settle its cores in Stripe.");
+      const soldAt = new Date(order.paid_at ?? order.created_at);
+      const set = await db.from(T.settings).select("ship_tz").eq("id", 1).maybeSingle();
+      const tz = normalizeSettings({ ...(set.data ?? {}), id: 1 }).ship_tz;
+      if (on < storeDate(soldAt, tz)) fail("The core can't arrive before the order was placed.");
+      if (on > storeDate(new Date(), tz)) fail("That day hasn't happened yet.");
+      const credit = coreCredit(charge.unit_cents * qty!, soldAt, on, tz);
+      const cents = Math.min(credit.cents, charge.total_cents - charge.refunded_cents);
+
+      let refundId: string | null = null;
+      if (cents > 0) {
+        const stripe = getStripe();
+        if (!stripe || !order.stripe_payment_intent) fail("This order has no Stripe payment to refund. Refund it by hand and add a note.");
+        try {
+          const refund = await stripe!.refunds.create(
+            {
+              payment_intent: order.stripe_payment_intent!,
+              amount: cents,
+              reason: "requested_by_customer",
+              metadata: { order_id: order.id, order_number: String(order.number), charge_id: String(charge.id), kind: "core_return" },
+            },
+            { idempotencyKey: `core-${charge.id}-${charge.returned_qty}-${qty}` },
+          );
+          refundId = refund.id;
+        } catch (e) {
+          fail(`Stripe did not take the refund: ${(e as Error).message}`);
+        }
+      }
+      await must(
+        db.from("fittings_core_returns").insert({
+          charge_id: charge.id,
+          qty,
+          returned_on: on,
+          days: credit.days,
+          credit_cents: cents,
+          stripe_refund_id: refundId,
+          note: str(a.note, 300),
+        }),
+      );
+      await must(
+        db
+          .from("fittings_order_charges")
+          .update({ returned_qty: charge.returned_qty + qty!, refunded_cents: charge.refunded_cents + cents })
+          .eq("id", charge.id),
+      );
+      return { credit_cents: cents, text: credit.text };
+    }
+
+    case "quote.update": {
+      const status = ["new", "quoted", "won", "lost", "cancelled"].includes(a.status as string) ? (a.status as string) : null;
+      const patch: Record<string, unknown> = { updated_at: now() };
+      if (status) patch.status = status;
+      if (typeof a.answer === "string") patch.answer = str(a.answer, 2000);
+      await must(db.from("fittings_quote_requests").update(patch).eq("id", id));
       return {};
     }
 

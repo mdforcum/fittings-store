@@ -82,6 +82,52 @@ export type Order = {
   paid_at: string | null;
   shipped_at: string | null;
   items: OrderItem[];
+  charges_cents: number;
+  ship_method: "parcel" | "pickup";
+  /** Cores and other charges; empty on orders from before they existed. */
+  charges: OrderCharge[];
+};
+
+export type CoreReturn = {
+  id: number;
+  qty: number;
+  returned_on: string;
+  days: number;
+  credit_cents: number;
+  stripe_refund_id: string | null;
+  note: string;
+  created_at: string;
+};
+
+export type OrderCharge = {
+  id: number;
+  product_id: string;
+  kind: "core" | "tire_fee" | "hazmat" | "deposit";
+  label: string;
+  unit_cents: number;
+  qty: number;
+  total_cents: number;
+  refundable: boolean;
+  returned_qty: number;
+  refunded_cents: number;
+  returns: CoreReturn[];
+};
+
+export type QuoteRequest = {
+  id: string;
+  number: number;
+  source: "product" | "list" | "phone" | "freight";
+  status: "new" | "quoted" | "won" | "lost" | "cancelled";
+  lines: Array<{ number: string; qty: number; product_id?: string; note?: string }>;
+  name: string;
+  company: string;
+  phone: string;
+  email: string;
+  zip: string;
+  machine: string;
+  notes: string;
+  answer: string;
+  created_at: string;
 };
 
 export type AdminConfig = {
@@ -99,6 +145,7 @@ export type AdminData = {
   settings: Settings;
   config: AdminConfig;
   orders: Order[];
+  quotes: QuoteRequest[];
   integrations: { stripe: Mode; webhook: boolean; shippo: Mode };
 };
 

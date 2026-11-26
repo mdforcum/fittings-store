@@ -57,7 +57,9 @@ export async function fulfillSession(
           country: address.country ?? "US",
         }
       : null,
-    subtotal_cents: session.amount_subtotal,
+    // The parts subtotal stays as checkout worked it out: Stripe's subtotal
+    // also counts core and other charges, which are kept on their own lines.
+    subtotal_cents: null,
     shipping_cents: session.total_details?.amount_shipping ?? 0,
     tax_cents: session.total_details?.amount_tax ?? 0,
     total_cents: session.amount_total,

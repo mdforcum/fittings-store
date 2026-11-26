@@ -20,6 +20,7 @@ export type Product = {
   universal: boolean;
   price_mode: "cart" | "quote";
   warranty_months: number | null;
+  ship_class: "parcel" | "freight" | "oversize" | "restricted" | "pickup";
 };
 
 export type Settings = {
@@ -31,7 +32,17 @@ export type Settings = {
   shipping_flat_cents: number;
   order_min_cents: number;
   free_ship_over_cents: number | null;
+  /** Same-day cutoff, "14:00", in ship_tz. */
+  ship_cutoff: string;
+  ship_tz: string;
 };
+
+export const SHIP_ZONES = [
+  { id: "America/New_York", label: "Eastern" },
+  { id: "America/Chicago", label: "Central" },
+  { id: "America/Denver", label: "Mountain" },
+  { id: "America/Los_Angeles", label: "Pacific" },
+] as const;
 
 export const DEFAULT_SETTINGS: Settings = {
   store_name: "Hydraulic Fittings",
@@ -42,6 +53,8 @@ export const DEFAULT_SETTINGS: Settings = {
   shipping_flat_cents: 800,
   order_min_cents: 1500,
   free_ship_over_cents: null,
+  ship_cutoff: "14:00",
+  ship_tz: "America/Chicago",
 };
 
 export const TYPES = [
@@ -146,6 +159,7 @@ export function normalizeProduct(row: Record<string, unknown>): Product {
     universal: row.universal === true,
     price_mode: row.price_mode === "quote" ? "quote" : "cart",
     warranty_months: n(row.warranty_months),
+    ship_class: (["parcel", "freight", "oversize", "restricted", "pickup"] as const).find((c) => c === row.ship_class) ?? "parcel",
   };
 }
 
@@ -163,5 +177,7 @@ export function normalizeSettings(row: Record<string, unknown> | null | undefine
     order_min_cents: Math.max(0, n(row.order_min_cents, 1500)),
     free_ship_over_cents:
       typeof row.free_ship_over_cents === "number" ? Math.max(0, row.free_ship_over_cents) : null,
+    ship_cutoff: /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/.test(s(row.ship_cutoff, "")) ? s(row.ship_cutoff, "") : "14:00",
+    ship_tz: SHIP_ZONES.some((z) => z.id === row.ship_tz) ? s(row.ship_tz, "") : "America/Chicago",
   };
 }

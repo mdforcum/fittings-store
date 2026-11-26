@@ -400,3 +400,25 @@ dialog.sheet { margin: 0 0 0 auto; width: min(440px, 100%); max-width: 100%; hei
 .mp-list { max-height: 340px; overflow: auto; }
 .mp-row { width: 100%; text-align: left; display: grid; gap: 2px; padding: 10px 12px; border: 1px solid var(--rule); border-radius: 3px; background: var(--surface); cursor: pointer; font: inherit; color: inherit; }
 .mp-row:hover, .mp-row:focus-visible { border-color: var(--ink); }
+
+/* checkout rules: shipping promise strip, charges in the cart, quote form */
+.promise { margin: 0; background: var(--sunken); border-bottom: 1px solid var(--rule); font: 500 .84rem/1.3 var(--body); color: var(--ink); }
+.promise .wrap { display: flex; flex-wrap: wrap; gap: 4px 18px; padding-top: 7px; padding-bottom: 7px; }
+.promise .wrap span + span::before { content: "·"; margin-right: 18px; color: var(--muted); }
+.sum .charge span:first-child { color: var(--muted); font-size: .9rem; }
+.sum .charge em { font-style: normal; font: 600 .72rem/1 var(--mono); text-transform: uppercase; letter-spacing: .06em; margin-left: 6px; color: var(--muted); }
+.quote-form { display: grid; gap: 10px; margin-top: 12px; }
+.quote-form p { margin: 0; }
+.quote-form textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--rule); border-radius: 3px; background: var(--surface); color: var(--ink); font: inherit; }
+.policy { max-width: 70ch; margin: 28px auto 48px; }
+.policy h1 { margin-bottom: 4px; }
+.policy table { border-collapse: collapse; width: 100%; margin: 14px 0; }
+.policy th, .policy td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--rule); }
+.policy th { font: 600 .78rem/1.2 var(--mono); text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+.quotes .quote { border: 1px solid var(--rule); background: var(--surface); padding: 14px; margin-top: 12px; display: grid; gap: 8px; }
+.quotes .quote ul { margin: 0; padding-left: 18px; }
+.charges li em { font-style: normal; color: var(--muted); font-size: .85rem; }
+.order .charges ul { display: grid; gap: 14px; }
+.order .charges li { display: block; }
+.order .charges li > p { margin: 0 0 6px; }
+.order .charges li em { margin-left: 6px; }

@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
-import type { AdminData, Order, ParcelPreset, RateQuote } from "@/lib/admin-types";
+import type { AdminData, Order, OrderCharge, ParcelPreset, RateQuote } from "@/lib/admin-types";
+import { CORE_FULL_DAYS, CORE_PARTIAL_DAYS, coreCredit, storeDate } from "@/lib/checkout-rules";
 import { money } from "@/lib/catalog";
 import type { Act, Say } from "../Admin";
 
@@ -183,13 +184,32 @@ function OrderCard({ o, data, act, say }: { o: Order; data: AdminData; act: Act;
                 <span className="mono">{money(it.unit_price_cents * it.qty)}</span>
               </li>
             ))}
+            {(o.charges ?? []).map((c) => (
+              <li key={`c${c.id}`}>
+                <span>
+                  {c.qty} × {c.label}
+                  {c.refundable && <em> refundable</em>}
+                </span>
+                <span className="mono">{money(c.total_cents)}</span>
+              </li>
+            ))}
             <li className="hint">
-              <span>Shipping {o.tax_cents ? "and tax" : ""}</span>
+              <span>
+                {o.ship_method === "pickup" ? "Pickup" : "Shipping"} {o.tax_cents ? "and tax" : ""}
+              </span>
               <span className="mono">{money(o.shipping_cents + o.tax_cents)}</span>
             </li>
           </ul>
         </div>
       </div>
+
+      {o.ship_method === "pickup" && o.status === "paid" && (
+        <p className="warn">Pickup order: pull the parts, then call the customer. Mark it shipped when it leaves the counter.</p>
+      )}
+
+      {(o.charges ?? []).some((c) => c.kind === "core") && o.status !== "cancelled" && (
+        <Cores o={o} tz={data.settings.ship_tz} act={act} say={say} />
+      )}
 
       {o.status === "shipped" && (
         <div className="panel">
@@ -328,5 +348,91 @@ function OrderCard({ o, data, act, say }: { o: Order; data: AdminData; act: Act;
         </div>
       )}
     </article>
+  );
+}
+
+
+/** Cores owed on an order, and the "came back" button that refunds the credit. */
+function Cores({ o, tz, act, say }: { o: Order; tz: string; act: Act; say: Say }) {
+  const cores = o.charges.filter((c) => c.kind === "core");
+  const sold = new Date(o.paid_at ?? o.created_at);
+  return (
+    <div className="panel charges">
+      <h3>Cores</h3>
+      <p className="hint">
+        Full credit if the old part is back within {CORE_FULL_DAYS} days of the sale, 85% to day {CORE_PARTIAL_DAYS}, none after.
+        The credit is refunded to the customer&apos;s card.
+      </p>
+      <ul>
+        {cores.map((c) => (
+          <CoreLine key={c.id} c={c} sold={sold} tz={tz} act={act} say={say} />
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function CoreLine({ c, sold, tz, act, say }: { c: OrderCharge; sold: Date; tz: string; act: Act; say: Say }) {
+  const left = c.qty - c.returned_qty;
+  const today = storeDate(new Date(), tz);
+  const [qty, setQty] = useState(String(left || 1));
+  const [on, setOn] = useState(today);
+  const [note, setNote] = useState("");
+  const [confirm, setConfirm] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const n = Math.max(1, Math.min(left, Number(qty) || 1));
+  const preview = coreCredit(c.unit_cents * n, sold, on || today, tz);
+  const due = new Date(sold.getTime() + CORE_FULL_DAYS * 86_400_000).toLocaleDateString("en-US", { timeZone: tz, month: "short", day: "numeric" });
+
+  async function send() {
+    if (!confirm) return setConfirm(true);
+    setBusy(true);
+    const done = await act("core.return", { charge_id: c.id, qty: n, returned_on: on, note });
+    setBusy(false);
+    setConfirm(false);
+    if (done) say(Number(done.credit_cents) > 0 ? `Core checked in. ${money(Number(done.credit_cents))} refunded to the card.` : "Core checked in. No credit was due.");
+  }
+
+  return (
+    <li>
+      <p>
+        <b>
+          {c.qty} × {c.label}
+        </b>{" "}
+        at {money(c.unit_cents)} · {c.returned_qty} back · {money(c.refunded_cents)} refunded
+        {left > 0 && <em> full credit through {due}</em>}
+      </p>
+      {c.returns.map((r) => (
+        <p className="hint" key={r.id}>
+          {r.qty} back on {r.returned_on} after {r.days} days: {money(r.credit_cents)}
+          {r.stripe_refund_id ? " refunded" : ""}
+          {r.note ? ` · ${r.note}` : ""}
+        </p>
+      ))}
+      {left > 0 && (
+        <div className="form">
+          <div className="two">
+            <label htmlFor={`cq-${c.id}`}>
+              How many came back
+              <input id={`cq-${c.id}`} inputMode="numeric" value={qty} onChange={(e) => setQty(e.target.value)} />
+            </label>
+            <label htmlFor={`cd-${c.id}`}>
+              Day it arrived
+              <input id={`cd-${c.id}`} type="date" value={on} max={today} onChange={(e) => setOn(e.target.value)} />
+            </label>
+          </div>
+          <label htmlFor={`cn-${c.id}`}>
+            Note (optional: condition, who brought it)
+            <input id={`cn-${c.id}`} value={note} onChange={(e) => setNote(e.target.value)} />
+          </label>
+          <p className="hint">{preview.text} That refunds {money(preview.cents)}.</p>
+          <div>
+            <button type="button" className="btn sm" disabled={busy} onClick={send}>
+              {busy ? "Refunding…" : confirm ? `Tap again to refund ${money(preview.cents)}` : "Core came back"}
+            </button>
+          </div>
+        </div>
+      )}
+    </li>
   );
 }

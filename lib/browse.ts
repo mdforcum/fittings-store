@@ -10,6 +10,9 @@ import { CONDITIONS, fitsSerial, numberNorm, type Category, type FitRow } from "
 /** A number an item goes by, as the shop needs it. */
 export type ShopXref = { kind: string; brand: string; number: string; number_norm: string };
 /** One "fits this machine" row, as the shop needs it. */
+/** A core or other charge an item carries, as the shop shows it. */
+export type ShopCharge = { kind: "core" | "tire_fee" | "hazmat" | "deposit"; amount_cents: number; refundable: boolean; label: string };
+
 export type ShopFit = Pick<FitRow, "machine_id" | "serial_prefix" | "serial_from" | "serial_to" | "position">;
 
 export type Hit = {

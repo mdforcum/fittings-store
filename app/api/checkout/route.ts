@@ -2,6 +2,8 @@
 // re-checked here on the server; nothing the browser sends is trusted but
 // the item ids and quantities.
 import { money, normalizeProduct, normalizeSettings, sellable, shippingFor } from "@/lib/catalog";
+import { checkoutPlan } from "@/lib/checkout-rules";
+import { surchargeLines, type Surcharge } from "@/lib/foundation";
 import { getStripe } from "@/lib/payments";
 import { T, adminDb, env, getConfig, json } from "@/lib/server";
 
@@ -31,10 +33,11 @@ export async function POST(req: Request) {
   if (wanted.size === 0) return json({ error: "empty", message: "Your cart is empty." }, 400);
 
   const db = adminDb();
-  const [found, settingsRow, taxMode] = await Promise.all([
+  const [found, settingsRow, taxMode, extras] = await Promise.all([
     db.from(T.products).select("*").in("id", [...wanted.keys()]),
     db.from(T.settings).select("*").eq("id", 1).maybeSingle(),
     getConfig<string>(db, "tax_mode"),
+    db.from("fittings_surcharges").select("product_id, kind, amount_cents, refundable, label").in("product_id", [...wanted.keys()]),
   ]);
   if (found.error) return json({ error: "server", message: "The catalog could not be loaded." }, 500);
   const settings = normalizeSettings(settingsRow.data);
@@ -59,6 +62,23 @@ export async function POST(req: Request) {
   }
 
   const lines = [...wanted].map(([id, qty]) => ({ p: byId.get(id)!, qty }));
+
+  // Quote-only items and truck freight are not paid for online.
+  const plan = checkoutPlan(lines.map((l) => ({ id: l.p.id, qty: l.qty, ship_class: l.p.ship_class, price_mode: l.p.price_mode })));
+  if (!plan.online) {
+    return json({ error: plan.method === "freight" ? "freight" : "quote", message: plan.reason }, 409);
+  }
+  const pickup = plan.method === "pickup";
+
+  // Cores and other charges ride along as their own lines. They are not part
+  // of the parts subtotal, so the order minimum and free shipping ignore them.
+  if (extras.error) return json({ error: "server", message: "The catalog could not be loaded." }, 500);
+  const charges = surchargeLines(
+    lines.map((l) => ({ product_id: l.p.id, qty: l.qty })),
+    (extras.data ?? []) as Array<Surcharge & { product_id: string }>,
+  );
+  const chargesTotal = charges.reduce((sum, c) => sum + c.total_cents, 0);
+
   const subtotal = lines.reduce((sum, l) => sum + l.qty * (l.p.price_cents ?? 0), 0);
   if (subtotal < settings.order_min_cents) {
     return json(
@@ -66,11 +86,18 @@ export async function POST(req: Request) {
       400,
     );
   }
-  const shipping = shippingFor(subtotal, settings);
+  const shipping = pickup ? 0 : shippingFor(subtotal, settings);
 
   const order = await db
     .from(T.orders)
-    .insert({ status: "pending", subtotal_cents: subtotal, shipping_cents: shipping, total_cents: subtotal + shipping })
+    .insert({
+      status: "pending",
+      ship_method: pickup ? "pickup" : "parcel",
+      subtotal_cents: subtotal,
+      shipping_cents: shipping,
+      charges_cents: chargesTotal,
+      total_cents: subtotal + chargesTotal + shipping,
+    })
     .select("id")
     .single();
   if (order.error || !order.data) return json({ error: "server", message: "The order could not be started." }, 500);
@@ -86,10 +113,25 @@ export async function POST(req: Request) {
       qty: l.qty,
     })),
   );
-  if (items.error) {
+  const chargeRows = charges.length
+    ? await db.from("fittings_order_charges").insert(
+        charges.map((c) => ({
+          order_id: orderId,
+          product_id: c.product_id,
+          kind: c.kind,
+          label: c.label,
+          unit_cents: c.unit_cents,
+          qty: c.qty,
+          total_cents: c.total_cents,
+          refundable: c.refundable,
+        })),
+      )
+    : { error: null };
+  if (items.error || chargeRows.error) {
     await db.from(T.orders).delete().eq("id", orderId);
     return json({ error: "server", message: "The order could not be started." }, 500);
   }
+  const nameOf = (id: string) => byId.get(id)?.name ?? "item";
 
   const origin = req.headers.get("origin") ?? new URL(req.url).origin;
   try {
@@ -97,27 +139,49 @@ export async function POST(req: Request) {
       mode: "payment",
       client_reference_id: orderId,
       metadata: { order_id: orderId },
-      line_items: lines.map((l) => ({
-        quantity: l.qty,
-        price_data: {
-          currency: "usd",
-          unit_amount: l.p.price_cents ?? 0,
-          product_data: {
-            name: l.p.name,
-            ...(l.p.part_number ? { description: `Part # ${l.p.part_number}` } : {}),
+      line_items: [
+        ...lines.map((l) => ({
+          quantity: l.qty,
+          price_data: {
+            currency: "usd",
+            unit_amount: l.p.price_cents ?? 0,
+            product_data: {
+              name: l.p.name,
+              ...(l.p.part_number ? { description: `Part # ${l.p.part_number}` } : {}),
+            },
           },
-        },
-      })),
-      shipping_address_collection: { allowed_countries: ["US"] },
-      shipping_options: [
-        {
-          shipping_rate_data: {
-            type: "fixed_amount",
-            display_name: shipping === 0 ? "Free shipping" : "Standard shipping",
-            fixed_amount: { amount: shipping, currency: "usd" },
+        })),
+        ...charges.map((c) => ({
+          quantity: c.qty,
+          price_data: {
+            currency: "usd",
+            unit_amount: c.unit_cents,
+            product_data: {
+              name: `${c.label}: ${nameOf(c.product_id)}`,
+              description:
+                c.kind === "core"
+                  ? "Refunded when your old part comes back: full within 30 days, 85% from day 31 to 60."
+                  : c.refundable
+                    ? "Refundable."
+                    : "Not refundable.",
+            },
           },
-        },
+        })),
       ],
+      ...(pickup
+        ? { custom_text: { submit: { message: "Pickup order: we'll call when it's ready at the counter." } } }
+        : {
+            shipping_address_collection: { allowed_countries: ["US" as const] },
+            shipping_options: [
+              {
+                shipping_rate_data: {
+                  type: "fixed_amount" as const,
+                  display_name: shipping === 0 ? "Free shipping" : "Standard shipping",
+                  fixed_amount: { amount: shipping, currency: "usd" },
+                },
+              },
+            ],
+          }),
       phone_number_collection: { enabled: true },
       ...(taxMode === "stripe" ? { automatic_tax: { enabled: true } } : {}),
       expires_at: Math.floor(Date.now() / 1000) + 31 * 60,

@@ -17,17 +17,19 @@ import {
   type Garage,
   type MyMachine,
   type NavNode,
+  type ShopCharge,
   type ShopFit,
   type ShopXref,
 } from "@/lib/browse";
+import { cartTotals, freeShipNudge, shipDay } from "@/lib/checkout-rules";
 import type { Category } from "@/lib/foundation";
 import MachinePicker from "./MachinePicker";
+import QuoteForm from "./QuoteForm";
 import { useCart, writeCart } from "@/lib/cart";
 import {
   TYPES,
   money,
   sellable,
-  shippingFor,
   specLine,
   stockInfo,
   typeOf,
@@ -44,6 +46,7 @@ type Props = {
   categories?: Category[];
   xrefs?: Record<string, ShopXref[]>;
   fits?: Record<string, ShopFit[]>;
+  charges?: Record<string, ShopCharge[]>;
 };
 
 const GARAGE_KEY = "my-machines";
@@ -61,7 +64,7 @@ function FitPill({ state, label }: { state: FitState; label: string }) {
   return <span className="pill bad">Not listed for your {label}</span>;
 }
 
-export default function Shop({ products, settings, ok, openCart, categories = [], xrefs = {}, fits = {} }: Props) {
+export default function Shop({ products, settings, ok, openCart, categories = [], xrefs = {}, fits = {}, charges = {} }: Props) {
   const router = useRouter();
   const cart = useCart();
   const [q, setQ] = useState("");
@@ -78,6 +81,19 @@ export default function Shop({ products, settings, ok, openCart, categories = []
   const [fitsOnly, setFitsOnly] = useState(false);
   const [garage, setGarage] = useState<Garage>(EMPTY_GARAGE);
   const [pickerOpen, setPickerOpen] = useState(false);
+  // When in-stock parts leave the shelf. Worked out in the browser after the
+  // first paint (the server's clock would be stale by the time it is read),
+  // then kept current every minute.
+  const [promise, setPromise] = useState("");
+  useEffect(() => {
+    const tick = () => setPromise(shipDay(new Date(), settings.ship_cutoff, settings.ship_tz).text);
+    const first = setTimeout(tick, 0);
+    const every = setInterval(tick, 60_000);
+    return () => {
+      clearTimeout(first);
+      clearInterval(every);
+    };
+  }, [settings.ship_cutoff, settings.ship_tz]);
 
   // The customer's machines live in this browser; read them after the first paint.
   useEffect(() => {
@@ -112,10 +128,14 @@ export default function Shop({ products, settings, ok, openCart, categories = []
     return { id, p, live, qty, total: live ? qty * (p!.price_cents ?? 0) : 0 };
   });
   const liveLines = lines.filter((l) => l.live);
-  const subtotal = liveLines.reduce((sum, l) => sum + l.total, 0);
   const count = liveLines.reduce((sum, l) => sum + l.qty, 0);
-  const shipping = shippingFor(subtotal, settings);
-  const short = Math.max(0, settings.order_min_cents - subtotal);
+  const totals = cartTotals(
+    liveLines.map((l) => ({ id: l.id, qty: l.qty, price_cents: l.p!.price_cents ?? 0, ship_class: l.p!.ship_class, price_mode: l.p!.price_mode })),
+    charges,
+    settings,
+  );
+  const { subtotal, shipping, short, plan } = totals;
+  const hasCore = totals.charges.some((c) => c.kind === "core");
 
   function setQty(id: string, qty: number) {
     const p = byId.get(id);
@@ -246,6 +266,15 @@ export default function Shop({ products, settings, ok, openCart, categories = []
           </nav>
         </div>
       </header>
+
+      {(settings.free_ship_over_cents != null || promise) && (
+        <p className="promise">
+          <span className="wrap">
+            {settings.free_ship_over_cents != null && <span>Free shipping on parts orders over {money(settings.free_ship_over_cents)}</span>}
+            {promise && <span>{promise}</span>}
+          </span>
+        </p>
+      )}
 
       <main className="wrap">
         <div className="lead">
@@ -478,32 +507,72 @@ export default function Shop({ products, settings, ok, openCart, categories = []
             </ul>
             <div className="sum">
               <div>
-                <span>Items</span>
+                <span>Parts</span>
                 <span className="mono">{money(subtotal)}</span>
               </div>
-              <div>
-                <span>Shipping</span>
-                <span className="mono">{shipping === 0 ? "Free" : money(shipping)}</span>
-              </div>
+              {totals.charges.map((c) => (
+                <div key={`${c.product_id}-${c.kind}`} className="charge">
+                  <span>
+                    {c.label}
+                    {c.qty > 1 ? ` × ${c.qty}` : ""}: {byId.get(c.product_id)?.name ?? "item"}
+                    {c.refundable && <em> refundable</em>}
+                  </span>
+                  <span className="mono">{money(c.total_cents)}</span>
+                </div>
+              ))}
+              {plan.online && (
+                <div>
+                  <span>{plan.method === "pickup" ? "Pickup at the counter" : "Shipping"}</span>
+                  <span className="mono">{plan.method === "pickup" || shipping === 0 ? "Free" : money(shipping)}</span>
+                </div>
+              )}
               <div className="grand">
-                <span>Total before tax</span>
-                <b>{money(subtotal + shipping)}</b>
+                <span>{plan.online ? "Total before tax" : "Parts and charges"}</span>
+                <b>{money(plan.online ? totals.total : subtotal + totals.chargesTotal)}</b>
               </div>
             </div>
+            {hasCore && (
+              <p className="hint">
+                Core charges come back when you return the old part: full credit within 30 days, 85% from day 31 to 60.{" "}
+                <Link href="/cores">How cores work</Link>
+              </p>
+            )}
+            {plan.online && plan.method === "parcel" && liveLines.length > 0 && short <= 0 && freeShipNudge(subtotal, settings) && (
+              <p className="hint">{freeShipNudge(subtotal, settings)}</p>
+            )}
+            {plan.online && plan.method === "parcel" && promise && <p className="hint">{promise}</p>}
+            {plan.method === "pickup" && plan.online && (
+              <p className="hint">Something in your cart is pickup only, so the whole order is held at the counter. We&apos;ll call when it&apos;s ready.</p>
+            )}
             {short > 0 && liveLines.length > 0 && (
               <p className="warn">
                 Minimum order is {money(settings.order_min_cents)}. Add {money(short)} more to check out.
               </p>
             )}
-            <button
-              type="button"
-              className="btn"
-              disabled={busy || liveLines.length === 0 || short > 0}
-              onClick={checkout}
-            >
-              {busy ? "Opening secure checkout…" : "Checkout"}
-            </button>
-            <p className="hint">You&apos;ll enter your address and pay on Stripe&apos;s secure page.</p>
+            {plan.online ? (
+              <>
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={busy || liveLines.length === 0 || short > 0}
+                  onClick={checkout}
+                >
+                  {busy ? "Opening secure checkout…" : "Checkout"}
+                </button>
+                <p className="hint">
+                  You&apos;ll {plan.method === "pickup" ? "" : "enter your address and "}pay on Stripe&apos;s secure page.
+                </p>
+              </>
+            ) : plan.method === "freight" ? (
+              <QuoteForm
+                source="freight"
+                intro={plan.reason}
+                machine={mine?.label ?? ""}
+                lines={liveLines.map((l) => ({ number: l.p!.part_number || l.p!.name, qty: l.qty, product_id: l.id }))}
+              />
+            ) : (
+              <p className="warn">{plan.reason}</p>
+            )}
             {checkoutError && (
               <div className="panel" role="alert">
                 <p className="err">{checkoutError.text}</p>
@@ -622,14 +691,36 @@ export default function Shop({ products, settings, ok, openCart, categories = []
                 <span className="hint">Price pending</span>
               )}
             </div>
+            {(charges[detail.id] ?? []).map((c) => (
+              <p className="hint" key={c.kind}>
+                Plus a {money(c.amount_cents)} {c.label.toLowerCase() || "charge"}
+                {c.kind === "core" ? (
+                  <>
+                    , refunded when your old part comes back. <Link href="/cores">How cores work</Link>
+                  </>
+                ) : c.refundable ? (
+                  ", refundable."
+                ) : (
+                  "."
+                )}
+              </p>
+            ))}
+            {detail.ship_class === "freight" || detail.ship_class === "oversize" ? (
+              <p className="hint">Ships by truck: the cart sends it for a freight quote to your ZIP code.</p>
+            ) : detail.ship_class === "pickup" ? (
+              <p className="hint">Pickup at the counter only.</p>
+            ) : null}
             {detail.price_mode === "quote" ? (
-              <div className="panel">
-                <p>
-                  <b>Priced by quote.</b> Big components are priced for the job: tell us the machine and serial and we&apos;ll come back with
-                  a price and a delivery date.
-                </p>
-                {(settings.phone || settings.email) && <p>{contact}.</p>}
-              </div>
+              <>
+                <QuoteForm
+                  key={detail.id}
+                  source="product"
+                  intro="Priced by quote. Big components are priced for the job: tell us the machine and serial and we'll come back with a price and a ship date."
+                  machine={mine?.label ?? ""}
+                  lines={[{ number: detail.part_number || detail.name, qty: 1, product_id: detail.id }]}
+                />
+                {(settings.phone || settings.email) && <p className="hint">{contact}.</p>}
+              </>
             ) : (
               <button type="button" className="btn" disabled={!sellable(detail)} onClick={() => add(detail)}>
                 {sellable(detail) ? "Add to cart" : detail.qty <= 0 ? "Out of stock" : "Not available yet"}

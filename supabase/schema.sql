@@ -862,3 +862,73 @@ create index if not exists fittings_machine_serials_prefix_idx on public.fitting
 alter table public.fittings_machine_serials enable row level security;
 revoke all on public.fittings_machine_serials from anon, authenticated;
 grant all on public.fittings_machine_serials to service_role;
+
+-- ---------------------------------------------------------------------------
+-- Checkout rules (2026-11-26): cores and other charges at checkout, core
+-- returns and their refunds, the same-day cutoff, pickup orders, and freight
+-- carts sent for a quote instead of paid online.
+--   Core credit: full within 30 days of the sale, 85% from day 31 to 60,
+--   nothing after day 60 (lib/checkout-rules.ts).
+-- ---------------------------------------------------------------------------
+alter table public.fittings_settings
+  add column if not exists ship_cutoff text not null default '14:00',
+  add column if not exists ship_tz text not null default 'America/Chicago';
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'fittings_settings_cutoff_ck') then
+    alter table public.fittings_settings add constraint fittings_settings_cutoff_ck
+      check (ship_cutoff ~ '^([01]?[0-9]|2[0-3]):[0-5][0-9]$');
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'fittings_settings_tz_ck') then
+    alter table public.fittings_settings add constraint fittings_settings_tz_ck
+      check (ship_tz in ('America/New_York','America/Chicago','America/Denver','America/Los_Angeles'));
+  end if;
+end $$;
+
+alter table public.fittings_orders
+  add column if not exists charges_cents integer not null default 0 check (charges_cents >= 0),
+  add column if not exists ship_method text not null default 'parcel' check (ship_method in ('parcel','pickup'));
+
+-- One row per item and kind of charge on an order: kept apart from the order
+-- items so the stock count never moves for a charge.
+create table if not exists public.fittings_order_charges (
+  id bigint generated always as identity primary key,
+  order_id uuid not null references public.fittings_orders(id) on delete cascade,
+  product_id text not null,
+  kind text not null check (kind in ('core','tire_fee','hazmat','deposit')),
+  label text not null,
+  unit_cents integer not null check (unit_cents >= 0),
+  qty integer not null check (qty > 0),
+  total_cents integer not null check (total_cents >= 0),
+  refundable boolean not null default false,
+  returned_qty integer not null default 0 check (returned_qty >= 0 and returned_qty <= qty),
+  refunded_cents integer not null default 0 check (refunded_cents >= 0 and refunded_cents <= total_cents)
+);
+create index if not exists fittings_order_charges_order_idx on public.fittings_order_charges(order_id);
+
+-- Each core that comes back: how many days it took, what it earned, the refund.
+create table if not exists public.fittings_core_returns (
+  id bigint generated always as identity primary key,
+  charge_id bigint not null references public.fittings_order_charges(id) on delete cascade,
+  qty integer not null check (qty > 0),
+  returned_on date not null,
+  days integer not null check (days >= 0),
+  credit_cents integer not null check (credit_cents >= 0),
+  stripe_refund_id text,
+  note text not null default '',
+  created_at timestamptz not null default now()
+);
+create index if not exists fittings_core_returns_charge_idx on public.fittings_core_returns(charge_id);
+
+alter table public.fittings_order_charges enable row level security;
+alter table public.fittings_core_returns enable row level security;
+revoke all on public.fittings_order_charges, public.fittings_core_returns from anon, authenticated;
+grant all on public.fittings_order_charges, public.fittings_core_returns to service_role;
+
+-- A cart that ships by truck becomes a quote request.
+alter table public.fittings_quote_requests drop constraint if exists fittings_quote_requests_source_check;
+alter table public.fittings_quote_requests add constraint fittings_quote_requests_source_check
+  check (source in ('product','list','phone','freight'));
+alter table public.fittings_quote_requests
+  add column if not exists answer text not null default '',
+  add column if not exists updated_at timestamptz not null default now();
