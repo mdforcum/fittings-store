@@ -10,6 +10,7 @@ import {
 } from "./catalog";
 import type { ShopCharge, ShopFit, ShopXref } from "./browse";
 import type { Category } from "./foundation";
+import { findIt, type FindIt, type Spot } from "./shelf";
 
 // Pasted values often pick up stray spaces, line breaks or wrapping quotes.
 const clean = (v: string | undefined) =>
@@ -167,6 +168,8 @@ export type ShopCatalog = {
   charges: Record<string, ShopCharge[]>;
   /** What each kit or package holds. */
   kits: Record<string, Array<{ product_id: string; qty: number }>>;
+  /** Where each placed item sits on our shelf, as the part page prints it. */
+  spots: Record<string, FindIt>;
 };
 
 /**
@@ -176,17 +179,24 @@ export type ShopCatalog = {
  */
 export async function getShopCatalog(): Promise<ShopCatalog> {
   const base = await getCatalog();
-  const empty = { categories: [], xrefs: {}, fits: {}, charges: {}, kits: {} };
+  const empty = { categories: [], xrefs: {}, fits: {}, charges: {}, kits: {}, spots: {} };
   const db = publicDb();
   if (!db || !base.ok) return { ...base, ...empty };
   const ids = new Set(base.products.map((p) => p.id));
-  const [c, x, f, sc, k] = await Promise.all([
+  const [c, x, f, sc, k, sp] = await Promise.all([
     db.from("fittings_categories").select("id, parent_id, name, sort, spec_fields, fitment, default_ship, live, note").eq("live", true),
     db.from("fittings_xrefs").select("product_id, kind, brand, number, number_norm").limit(20000),
     db.from("fittings_fitment").select("product_id, machine_id, serial_prefix, serial_from, serial_to, position").limit(20000),
     db.from("fittings_surcharges").select("product_id, kind, amount_cents, refundable, label").gt("amount_cents", 0).limit(20000),
     db.from("fittings_kit_items").select("kit_id, product_id, qty, sort").order("sort").limit(20000),
+    db.from("fittings_shelf_spots").select("id, parent_id, level, code, label, sort").limit(20000),
   ]);
+  const spotRows = sp.error ? [] : ((sp.data ?? []) as Spot[]);
+  const spots: Record<string, FindIt> = {};
+  for (const p of base.products) {
+    const where = p.spot_id ? findIt(spotRows, p.spot_id) : null;
+    if (where) spots[p.id] = where;
+  }
   const kits: Record<string, Array<{ product_id: string; qty: number }>> = {};
   for (const r of k.error ? [] : ((k.data ?? []) as Array<{ kit_id: string; product_id: string; qty: number }>)) {
     if (ids.has(r.kit_id)) (kits[r.kit_id] ??= []).push({ product_id: r.product_id, qty: r.qty });
@@ -203,5 +213,6 @@ export async function getShopCatalog(): Promise<ShopCatalog> {
     fits: f.error ? {} : (group(f.data as Array<ShopFit & { product_id: string }>) as Record<string, ShopFit[]>),
     charges: sc.error ? {} : (group(sc.data as Array<ShopCharge & { product_id: string }>) as Record<string, ShopCharge[]>),
     kits,
+    spots,
   };
 }

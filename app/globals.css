@@ -427,3 +427,8 @@ dialog.sheet { margin: 0 0 0 auto; width: min(440px, 100%); max-width: 100%; hei
 .kit-list h3 { margin: 0; }
 .pill.usa { background: #e7f1fb; color: #1d3f66; }
 @media (prefers-color-scheme: dark) { .pill.usa { background: #1d3147; color: #cfe2f7; } }
+
+/* Where a part sits on our shelf: the same line the counter and the picker read. */
+.find-it { border-left: 4px solid var(--zinc); background: var(--sunken); padding: 10px 12px; border-radius: 6px; margin: 8px 0; }
+.find-it p { margin: 0; font-size: 1rem; line-height: 1.45; }
+.find-it .mono { margin-top: 4px; font-size: .9rem; color: var(--muted); }

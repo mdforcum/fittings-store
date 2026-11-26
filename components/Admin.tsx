@@ -9,6 +9,7 @@ import Machines from "./admin/Machines";
 import Orders from "./admin/Orders";
 import Quotes from "./admin/Quotes";
 import SettingsTab from "./admin/SettingsTab";
+import Spots from "./admin/Spots";
 import SupplierPhotos from "./admin/SupplierPhotos";
 import Survey from "./admin/Survey";
 import { Toast, type ToastState } from "./ui";
@@ -16,10 +17,11 @@ import { Toast, type ToastState } from "./ui";
 export type Act = (action: string, payload?: Record<string, unknown>) => Promise<Record<string, unknown> | null>;
 export type Say = (text: string, bad?: boolean) => void;
 
-type Tab = "inventory" | "machines" | "orders" | "quotes" | "hoses" | "survey" | "photos" | "settings";
+type Tab = "inventory" | "spots" | "machines" | "orders" | "quotes" | "hoses" | "survey" | "photos" | "settings";
 
 const TAB_NAMES: Record<Tab, string> = {
   inventory: "Inventory",
+  spots: "Shelf map",
   machines: "Machines",
   orders: "Orders",
   quotes: "Quotes",
@@ -126,6 +128,7 @@ export default function Admin() {
           </p>
         )}
         {data && tab === "inventory" && <Inventory data={data} act={act} say={say} reload={reload} />}
+        {data && tab === "spots" && <Spots products={data.products} say={say} />}
         {data && tab === "orders" && <Orders data={data} act={act} say={say} />}
         {data && tab === "quotes" && <Quotes data={data} act={act} say={say} />}
         {data && tab === "settings" && <SettingsTab data={data} act={act} say={say} />}

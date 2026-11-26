@@ -24,6 +24,7 @@ const p = (id: string, over: Partial<Product> = {}): Product => ({
   price_mode: "cart",
   ship_class: "parcel",
   origin: "",
+  spot_id: null,
   warranty_months: null,
   ...over,
 });

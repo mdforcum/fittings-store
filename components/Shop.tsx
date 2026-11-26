@@ -23,6 +23,7 @@ import {
 } from "@/lib/browse";
 import { cartTotals, freeShipNudge, shipDay } from "@/lib/checkout-rules";
 import { packageValue } from "@/lib/seal-kits";
+import type { FindIt } from "@/lib/shelf";
 import { madeInUSA, type Category } from "@/lib/foundation";
 import MachinePicker from "./MachinePicker";
 import QuoteForm from "./QuoteForm";
@@ -49,6 +50,8 @@ type Props = {
   fits?: Record<string, ShopFit[]>;
   charges?: Record<string, ShopCharge[]>;
   kits?: Record<string, Array<{ product_id: string; qty: number }>>;
+  /** Where each placed item sits on our shelf. */
+  spots?: Record<string, FindIt>;
 };
 
 const GARAGE_KEY = "my-machines";
@@ -66,7 +69,7 @@ function FitPill({ state, label }: { state: FitState; label: string }) {
   return <span className="pill bad">Not listed for your {label}</span>;
 }
 
-export default function Shop({ products, settings, ok, openCart, categories = [], xrefs = {}, fits = {}, charges = {}, kits = {} }: Props) {
+export default function Shop({ products, settings, ok, openCart, categories = [], xrefs = {}, fits = {}, charges = {}, kits = {}, spots = {} }: Props) {
   const router = useRouter();
   const cart = useCart();
   const [q, setQ] = useState("");
@@ -400,6 +403,11 @@ export default function Shop({ products, settings, ok, openCart, categories = []
                             Part # <b>{p.part_number}</b>
                           </p>
                         )}
+                        {spots[p.id] && (
+                          <p className="pn" title={spots[p.id].line}>
+                            Shelf <b>{spots[p.id].code}</b>
+                          </p>
+                        )}
                         {why && <p className="because">{why}</p>}
                         {(p.condition !== "new" || mine || madeInUSA(p.origin)) && (
                           <p className="tags">
@@ -697,6 +705,14 @@ export default function Shop({ products, settings, ok, openCart, categories = []
               </p>
             )}
             {detail.description && <p>{detail.description}</p>}
+            {spots[detail.id] && (
+              <div className="find-it">
+                <p>
+                  <b>Find it in our shop:</b> {spots[detail.id].line}
+                </p>
+                <p className="mono">Shelf code {spots[detail.id].code}</p>
+              </div>
+            )}
             <div className="total">
               <span className={`pill ${stockInfo(detail, settings.low_stock).tone}`}>
                 {stockInfo(detail, settings.low_stock).text}

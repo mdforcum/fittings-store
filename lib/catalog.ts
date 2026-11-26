@@ -23,6 +23,8 @@ export type Product = {
   price_mode: "cart" | "quote";
   warranty_months: number | null;
   ship_class: "parcel" | "freight" | "oversize" | "restricted" | "pickup";
+  /** Where it sits on our shelf (fittings_shelf_spots); null until placed. */
+  spot_id: string | null;
 };
 
 export type Settings = {
@@ -163,6 +165,7 @@ export function normalizeProduct(row: Record<string, unknown>): Product {
     price_mode: row.price_mode === "quote" ? "quote" : "cart",
     warranty_months: n(row.warranty_months),
     ship_class: (["parcel", "freight", "oversize", "restricted", "pickup"] as const).find((c) => c === row.ship_class) ?? "parcel",
+    spot_id: typeof row.spot_id === "string" && row.spot_id ? row.spot_id : null,
   };
 }
 
