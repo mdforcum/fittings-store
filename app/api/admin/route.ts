@@ -35,6 +35,10 @@ import { buyLabel, freshLabelUrl, getRates } from "@/lib/shippo";
 export const dynamic = "force-dynamic";
 
 class ActionError extends Error {}
+/** The database change this action needs hasn't been run yet (missing function or column). */
+const notSetUp = (e: { code?: string; message?: string }) =>
+  e.code === "PGRST202" || e.code === "42883" || e.code === "PGRST204" || /could not find the function/i.test(e.message ?? "");
+
 const fail = (message: string): never => {
   throw new ActionError(message);
 };
@@ -217,14 +221,19 @@ async function run(action: string, a: Payload, db: SupabaseClient, origin: strin
       if (delta == null || delta === 0) return {};
       const kind = a.kind === "receive" || a.kind === "return" ? a.kind : "adjust";
       if (kind !== "adjust" && delta < 0) fail("A shipment or return adds parts. Use the count to take parts off.");
-      await must(db.rpc("fittings_adjust_qty", { p_id: id, p_delta: delta, p_kind: kind, p_note: str(a.note, 200) }));
+      const r = await db.rpc("fittings_adjust_qty", { p_id: id, p_delta: delta, p_kind: kind, p_note: str(a.note, 200) });
+      // Before supabase/add-stock-holds.sql runs, only the two-value version exists.
+      if (r.error && notSetUp(r.error)) await must(db.rpc("fittings_adjust_qty", { p_id: id, p_delta: delta }));
+      else if (r.error) throw new Error(r.error.message);
       return {};
     }
 
     case "qty.count": {
       const n = int(a.qty);
       if (n == null || n < 0) fail("Quantity must be a whole number, 0 or more.");
-      await must(db.rpc("fittings_count_qty", { p_id: id, p_qty: n, p_note: str(a.note, 200) }));
+      const r = await db.rpc("fittings_count_qty", { p_id: id, p_qty: n, p_note: str(a.note, 200) });
+      if (r.error && notSetUp(r.error)) await must(db.from(T.products).update({ qty: n }).eq("id", id));
+      else if (r.error) throw new Error(r.error.message);
       return {};
     }
 
@@ -347,7 +356,8 @@ async function run(action: string, a: Payload, db: SupabaseClient, origin: strin
         const n = int(v);
         return n == null || n < 0 ? fail(`${label} must be 0 or more.`) : n;
       };
-      await must(
+      const holdMinutes = ((n) => (n != null && n >= 30 && n <= 1440 ? n : fail("Hold parts in checkout for 30 to 1440 minutes.")))(int(s.hold_minutes ?? 30));
+      const saveSettings = (withHold: boolean) =>
         db.from(T.settings).upsert({
           id: 1,
           store_name: str(s.store_name, 60) || "Hydraulic Fittings",
@@ -362,9 +372,12 @@ async function run(action: string, a: Payload, db: SupabaseClient, origin: strin
             ? str(s.ship_cutoff, 5)
             : fail("Give the same-day cutoff as a time, like 14:00."),
           ship_tz: SHIP_ZONES.some((z) => z.id === s.ship_tz) ? s.ship_tz : "America/Chicago",
-          hold_minutes: ((n) => (n != null && n >= 30 && n <= 1440 ? n : fail("Hold parts in checkout for 30 to 1440 minutes.")))(int(s.hold_minutes)),
-        }),
-      );
+          ...(withHold ? { hold_minutes: holdMinutes } : {}),
+        });
+      const saved = await saveSettings(true);
+      // Before supabase/add-stock-holds.sql runs there is no hold_minutes column.
+      if (saved.error && /hold_minutes/.test(saved.error.message)) await must(saveSettings(false));
+      else if (saved.error) throw new Error(saved.error.message);
       const c = (a.config ?? {}) as Payload;
       const from = (c.ship_from ?? {}) as Payload;
       const shipFrom: ShipFrom = {
