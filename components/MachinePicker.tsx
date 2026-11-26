@@ -34,6 +34,7 @@ export default function MachinePicker({
   const [serial, setSerial] = useState("");
   const [matches, setMatches] = useState<Match[] | null>(null);
   const [serialNote, setSerialNote] = useState("");
+  const [narrow, setNarrow] = useState("");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -69,7 +70,10 @@ export default function MachinePicker({
       const b = (await r.json()) as { ok: boolean; message?: string; matches?: Match[] };
       if (!b.ok) setSerialNote(b.message ?? "That did not work.");
       else if (!b.matches?.length) setSerialNote("We don't have that serial on our list yet. Pick the machine instead, and keep the serial: we'll still use it.");
-      else setMatches(b.matches);
+      else {
+        setNarrow("");
+        setMatches(b.matches);
+      }
     } catch {
       setSerialNote("No connection. Try again.");
     }
@@ -132,10 +136,18 @@ export default function MachinePicker({
                 {serialNote}
               </p>
             )}
+            {matches && matches.length > 8 && (
+              <label htmlFor="mp-narrow">
+                {matches.length} models share this serial numbering. Type your model to narrow it down
+                <input id="mp-narrow" autoComplete="off" value={narrow} onChange={(e) => setNarrow(e.target.value)} placeholder="e.g. 580B" />
+              </label>
+            )}
             {matches && (
               <ul className="mp-list" role="status">
-                {matches.length > 1 && <li className="hint">This numbering is shared by several models. Pick the one on your plate.</li>}
-                {matches.map((m) => (
+                {matches.length > 1 && matches.length <= 8 && <li className="hint">This numbering is shared by several models. Pick the one on your plate.</li>}
+                {matches
+                  .filter((m) => !narrow.trim() || `${m.make} ${m.model} ${m.series}`.toLowerCase().includes(narrow.trim().toLowerCase()))
+                  .map((m) => (
                   <li key={m.machine_id}>
                     <button
                       type="button"
@@ -146,7 +158,7 @@ export default function MachinePicker({
                       {m.series && <small className="hint">{m.series}</small>}
                     </button>
                   </li>
-                ))}
+                  ))}
               </ul>
             )}
           </form>

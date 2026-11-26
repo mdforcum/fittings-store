@@ -22,6 +22,7 @@ import {
   type ShopXref,
 } from "@/lib/browse";
 import { cartTotals, freeShipNudge, shipDay } from "@/lib/checkout-rules";
+import { packageValue } from "@/lib/seal-kits";
 import type { Category } from "@/lib/foundation";
 import MachinePicker from "./MachinePicker";
 import QuoteForm from "./QuoteForm";
@@ -47,6 +48,7 @@ type Props = {
   xrefs?: Record<string, ShopXref[]>;
   fits?: Record<string, ShopFit[]>;
   charges?: Record<string, ShopCharge[]>;
+  kits?: Record<string, Array<{ product_id: string; qty: number }>>;
 };
 
 const GARAGE_KEY = "my-machines";
@@ -64,7 +66,7 @@ function FitPill({ state, label }: { state: FitState; label: string }) {
   return <span className="pill bad">Not listed for your {label}</span>;
 }
 
-export default function Shop({ products, settings, ok, openCart, categories = [], xrefs = {}, fits = {}, charges = {} }: Props) {
+export default function Shop({ products, settings, ok, openCart, categories = [], xrefs = {}, fits = {}, charges = {}, kits = {} }: Props) {
   const router = useRouter();
   const cart = useCart();
   const [q, setQ] = useState("");
@@ -691,6 +693,39 @@ export default function Shop({ products, settings, ok, openCart, categories = []
                 <span className="hint">Price pending</span>
               )}
             </div>
+            {(kits[detail.id] ?? []).length > 0 &&
+              (() => {
+                const lines = kits[detail.id].map((k) => ({
+                  ...k,
+                  item: byId.get(k.product_id),
+                  position: (fits[k.product_id] ?? []).find((f) => f.position)?.position ?? "",
+                }));
+                const value = packageValue(
+                  detail.price_cents,
+                  lines.map((l) => ({ product_id: l.product_id, qty: l.qty, price_cents: l.item?.price_cents ?? null })),
+                );
+                return (
+                  <div className="panel kit-list">
+                    <h3>What&apos;s in it: {value.kits} kit{value.kits === 1 ? "" : "s"}</h3>
+                    <ul>
+                      {lines.map((l) => (
+                        <li key={l.product_id}>
+                          <span>
+                            {l.qty} × {l.position ? `${l.position}: ` : ""}
+                            {l.item?.name ?? l.product_id}
+                          </span>
+                          {l.item?.part_number && <span className="mono">{l.item.part_number}</span>}
+                        </li>
+                      ))}
+                    </ul>
+                    {value.saves != null && value.separate != null && (
+                      <p className="hint">
+                        Bought one at a time: {money(value.separate)}. The package saves {money(value.saves)}.
+                      </p>
+                    )}
+                  </div>
+                );
+              })()}
             {(charges[detail.id] ?? []).map((c) => (
               <p className="hint" key={c.kind}>
                 Plus a {money(c.amount_cents)} {c.label.toLowerCase() || "charge"}

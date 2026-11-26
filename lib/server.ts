@@ -163,6 +163,8 @@ export type ShopCatalog = {
   fits: Record<string, ShopFit[]>;
   /** Cores and other charges, by item. */
   charges: Record<string, ShopCharge[]>;
+  /** What each kit or package holds. */
+  kits: Record<string, Array<{ product_id: string; qty: number }>>;
 };
 
 /**
@@ -172,16 +174,21 @@ export type ShopCatalog = {
  */
 export async function getShopCatalog(): Promise<ShopCatalog> {
   const base = await getCatalog();
-  const empty = { categories: [], xrefs: {}, fits: {}, charges: {} };
+  const empty = { categories: [], xrefs: {}, fits: {}, charges: {}, kits: {} };
   const db = publicDb();
   if (!db || !base.ok) return { ...base, ...empty };
   const ids = new Set(base.products.map((p) => p.id));
-  const [c, x, f, sc] = await Promise.all([
+  const [c, x, f, sc, k] = await Promise.all([
     db.from("fittings_categories").select("id, parent_id, name, sort, spec_fields, fitment, default_ship, live, note").eq("live", true),
     db.from("fittings_xrefs").select("product_id, kind, brand, number, number_norm").limit(20000),
     db.from("fittings_fitment").select("product_id, machine_id, serial_prefix, serial_from, serial_to, position").limit(20000),
     db.from("fittings_surcharges").select("product_id, kind, amount_cents, refundable, label").gt("amount_cents", 0).limit(20000),
+    db.from("fittings_kit_items").select("kit_id, product_id, qty, sort").order("sort").limit(20000),
   ]);
+  const kits: Record<string, Array<{ product_id: string; qty: number }>> = {};
+  for (const r of k.error ? [] : ((k.data ?? []) as Array<{ kit_id: string; product_id: string; qty: number }>)) {
+    if (ids.has(r.kit_id)) (kits[r.kit_id] ??= []).push({ product_id: r.product_id, qty: r.qty });
+  }
   const group = <T extends { product_id: string }>(rows: T[] | null) => {
     const out: Record<string, Array<Omit<T, "product_id">>> = {};
     for (const { product_id, ...rest } of rows ?? []) if (ids.has(product_id)) (out[product_id] ??= []).push(rest);
@@ -193,5 +200,6 @@ export async function getShopCatalog(): Promise<ShopCatalog> {
     xrefs: x.error ? {} : (group(x.data as Array<ShopXref & { product_id: string }>) as Record<string, ShopXref[]>),
     fits: f.error ? {} : (group(f.data as Array<ShopFit & { product_id: string }>) as Record<string, ShopFit[]>),
     charges: sc.error ? {} : (group(sc.data as Array<ShopCharge & { product_id: string }>) as Record<string, ShopCharge[]>),
+    kits,
   };
 }

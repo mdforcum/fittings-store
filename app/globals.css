@@ -422,3 +422,6 @@ dialog.sheet { margin: 0 0 0 auto; width: min(440px, 100%); max-width: 100%; hei
 .order .charges li { display: block; }
 .order .charges li > p { margin: 0 0 6px; }
 .order .charges li em { margin-left: 6px; }
+.kit-list ul { margin: 6px 0 0; padding: 0; list-style: none; display: grid; gap: 4px; }
+.kit-list li { display: flex; justify-content: space-between; gap: 10px; font-size: .92rem; }
+.kit-list h3 { margin: 0; }

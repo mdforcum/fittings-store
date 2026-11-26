@@ -88,3 +88,12 @@ test("the starter lineup file is well formed", () => {
   const d320 = doc.machines.find((m) => m.make === "Cat" && m.model === "320D");
   assert.ok(d320?.runs.some((r) => r.prefix === "PHX" && r.confidence === "oem"));
 });
+
+test("a plant letter after the number is part of the numbering", () => {
+  const t = { prefix: "", serial_from: "134700T", serial_to: "157108T" };
+  assert.equal(inRun("150000T", t), true);
+  assert.equal(inRun("150000L", t), false);
+  assert.equal(inRun("150000", t), false);
+  assert.equal(inRun("157109T", t), false);
+  assert.equal(inRun("140001L", { prefix: "", serial_from: "140000L", serial_to: "" }), true);
+});

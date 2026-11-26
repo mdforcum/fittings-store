@@ -577,6 +577,14 @@ export async function importLineup(db: SupabaseClient, lineup: Lineup): Promise<
     check(error);
     for (const r of data ?? []) ids.set(`${r.make}|${r.model}`, r.id as string);
   }
+  // Serial breaks only where the lineup lists them, so breaks added by hand in
+  // the back office survive a reload of the starter lineup.
+  for (const { machine: m } of clean) {
+    const id = ids.get(`${m.make}|${m.model}`);
+    if (!id || !m.serial_breaks.length) continue;
+    const { error } = await db.from(FT.machines).update({ serial_breaks: m.serial_breaks }).eq("id", id);
+    check(error);
+  }
   const machineIds = [...ids.values()];
   for (let i = 0; i < machineIds.length; i += 200) {
     const { error } = await db.from(FT.serials).delete().eq("batch", lineup.name).in("machine_id", machineIds.slice(i, i + 200));

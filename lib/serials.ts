@@ -39,7 +39,10 @@ function parts(s: string, prefix: string): { lead: string; n: number; width: num
     return /^\d+$/.test(rest) ? { lead: prefix, n: Number(rest), width: rest.length } : null;
   }
   const m = /^(?:(.*[A-Z]))?(\d+)$/.exec(s);
-  return m ? { lead: m[1] ?? "", n: Number(m[2]), width: m[2].length } : null;
+  if (m) return { lead: m[1] ?? "", n: Number(m[2]), width: m[2].length };
+  // A plant letter after the number (Ford 021649B, John Deere 134700T) is part of the numbering.
+  const t = /^(?:(.*?[A-Z]))?(\d+)([A-Z])$/.exec(s);
+  return t ? { lead: `${t[1] ?? ""}*${t[3]}`, n: Number(t[2]), width: t[2].length } : null;
 }
 
 /** The digit widths a run's ends are written in, for ends in the serial's own numbering. */

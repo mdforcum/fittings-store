@@ -31,6 +31,7 @@ import {
   type SpecValue,
   type XrefKind,
 } from "@/lib/foundation";
+import { positionsFor } from "@/lib/seal-kits";
 import type { Say } from "../Admin";
 import { Modal } from "../ui";
 
@@ -760,7 +761,19 @@ function FitSection({
                   )}
                   <input aria-label="Serial from" placeholder="Serial from" maxLength={40} value={r.serial_from} onChange={(e) => put(i, { serial_from: e.target.value })} />
                   <input aria-label="Serial to" placeholder="Serial to" maxLength={40} value={r.serial_to} onChange={(e) => put(i, { serial_to: e.target.value })} />
-                  <input aria-label="Where on the machine" placeholder="Position" maxLength={60} value={r.position} onChange={(e) => put(i, { position: e.target.value })} />
+                  <input
+                    aria-label="Where on the machine"
+                    placeholder="Position (Boom, Dipper…)"
+                    maxLength={60}
+                    list={`fit-pos-${i}`}
+                    value={r.position}
+                    onChange={(e) => put(i, { position: e.target.value })}
+                  />
+                  <datalist id={`fit-pos-${i}`}>
+                    {positionsFor(m?.kind).map((p) => (
+                      <option key={p} value={p} />
+                    ))}
+                  </datalist>
                 </div>
               </div>
             );
