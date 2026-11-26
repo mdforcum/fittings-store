@@ -292,7 +292,7 @@ test("serial ranges compare as numbers and allow open ends", () => {
 
 test("the seeded category tree in schema.sql is well formed", () => {
   const sql = readFileSync(new URL("../supabase/schema.sql", import.meta.url), "utf8");
-  const start = sql.indexOf("insert into public.fittings_categories");
+  const start = sql.indexOf("insert into shop.fittings_categories");
   const end = sql.indexOf("on conflict (id) do update", start);
   assert.ok(start > 0 && end > start);
   const block = sql.slice(start, end);
@@ -318,7 +318,7 @@ test("the seeded category tree in schema.sql is well formed", () => {
 
 test("the tree has exactly six departments and every old category sits under one", () => {
   const sql = readFileSync(new URL("../supabase/schema.sql", import.meta.url), "utf8");
-  const start = sql.indexOf("insert into public.fittings_categories");
+  const start = sql.indexOf("insert into shop.fittings_categories");
   const block = sql.slice(start, sql.indexOf("on conflict (id) do update", start));
   const tops = [...block.matchAll(/^\s+\('([a-z0-9-]+)', null,/gm)].map((m) => m[1]);
   assert.deepEqual(tops, ["machine-systems", "implements", "construction", "hydraulics", "universal", "tires"]);

@@ -1,10 +1,18 @@
 -- Fittings store schema.
--- Lives in the shared fieldline-staging database, so every object carries a
--- fittings_ prefix and nothing here touches other tables. Applied by hand
--- (not through that project's migration history) so it never collides with
--- the Backroad Iron migrations.
+-- Lives in the shared fieldline-staging database, in its own schema `shop`, so
+-- Backroad Iron's migrations own `public` and `fieldline` alone: its deploy
+-- check compares those two schemas against its migration files, and anything
+-- of ours there would fail it. Applied by hand (not through that project's
+-- migration history). The shop reads Backroad Iron's shared catalog
+-- (public.catalog_*) but never writes it; shared machine data goes in through
+-- Backroad Iron's own migrations and loaders.
+-- The Data API must list `shop` under exposed schemas (dashboard: Project
+-- Settings > Data API), or the shop's client cannot reach these tables.
 
-create table if not exists public.fittings_products (
+create schema if not exists shop;
+grant usage on schema shop to anon, authenticated, service_role;
+
+create table if not exists shop.fittings_products (
   id text primary key,
   name text not null,
   type text not null default 'other',
@@ -21,13 +29,13 @@ create table if not exists public.fittings_products (
   updated_at timestamptz not null default now()
 );
 
-create table if not exists public.fittings_product_costs (
-  product_id text primary key references public.fittings_products(id) on delete cascade,
+create table if not exists shop.fittings_product_costs (
+  product_id text primary key references shop.fittings_products(id) on delete cascade,
   cost_cents integer check (cost_cents is null or cost_cents >= 0),
   margin numeric(7,2)
 );
 
-create table if not exists public.fittings_settings (
+create table if not exists shop.fittings_settings (
   id integer primary key default 1 check (id = 1),
   store_name text not null default 'Hydraulic Fittings',
   tagline text not null default 'Caps and plugs for open hydraulic lines',
@@ -40,13 +48,13 @@ create table if not exists public.fittings_settings (
 );
 
 -- Server-only values: ship-from address, parcel presets, tax mode, Stripe webhook secret.
-create table if not exists public.fittings_private_config (
+create table if not exists shop.fittings_private_config (
   key text primary key,
   value jsonb not null,
   updated_at timestamptz not null default now()
 );
 
-create table if not exists public.fittings_orders (
+create table if not exists shop.fittings_orders (
   id uuid primary key default gen_random_uuid(),
   number bigint generated always as identity (start with 1001),
   status text not null default 'pending'
@@ -74,9 +82,9 @@ create table if not exists public.fittings_orders (
   shipped_at timestamptz
 );
 
-create table if not exists public.fittings_order_items (
+create table if not exists shop.fittings_order_items (
   id bigint generated always as identity primary key,
-  order_id uuid not null references public.fittings_orders(id) on delete cascade,
+  order_id uuid not null references shop.fittings_orders(id) on delete cascade,
   product_id text not null,
   name text not null,
   part_number text not null default '',
@@ -84,39 +92,39 @@ create table if not exists public.fittings_order_items (
   qty integer not null check (qty > 0)
 );
 
-create index if not exists fittings_order_items_order_idx on public.fittings_order_items(order_id);
-create index if not exists fittings_orders_status_idx on public.fittings_orders(status, created_at desc);
+create index if not exists fittings_order_items_order_idx on shop.fittings_order_items(order_id);
+create index if not exists fittings_orders_status_idx on shop.fittings_orders(status, created_at desc);
 
 -- Row level security: shoppers may read the catalog and public store settings.
 -- Everything else is reachable only with the server's secret key.
-alter table public.fittings_products enable row level security;
-alter table public.fittings_product_costs enable row level security;
-alter table public.fittings_settings enable row level security;
-alter table public.fittings_private_config enable row level security;
-alter table public.fittings_orders enable row level security;
-alter table public.fittings_order_items enable row level security;
+alter table shop.fittings_products enable row level security;
+alter table shop.fittings_product_costs enable row level security;
+alter table shop.fittings_settings enable row level security;
+alter table shop.fittings_private_config enable row level security;
+alter table shop.fittings_orders enable row level security;
+alter table shop.fittings_order_items enable row level security;
 
-drop policy if exists "fittings catalog is public" on public.fittings_products;
-create policy "fittings catalog is public" on public.fittings_products
+drop policy if exists "fittings catalog is public" on shop.fittings_products;
+create policy "fittings catalog is public" on shop.fittings_products
   for select to anon, authenticated using (true);
-drop policy if exists "fittings settings are public" on public.fittings_settings;
-create policy "fittings settings are public" on public.fittings_settings
+drop policy if exists "fittings settings are public" on shop.fittings_settings;
+create policy "fittings settings are public" on shop.fittings_settings
   for select to anon, authenticated using (true);
 
-revoke all on public.fittings_products, public.fittings_product_costs, public.fittings_settings,
-  public.fittings_private_config, public.fittings_orders, public.fittings_order_items
+revoke all on shop.fittings_products, shop.fittings_product_costs, shop.fittings_settings,
+  shop.fittings_private_config, shop.fittings_orders, shop.fittings_order_items
   from anon, authenticated;
-grant select on public.fittings_products, public.fittings_settings to anon, authenticated;
-grant all on public.fittings_products, public.fittings_product_costs, public.fittings_settings,
-  public.fittings_private_config, public.fittings_orders, public.fittings_order_items
+grant select on shop.fittings_products, shop.fittings_settings to anon, authenticated;
+grant all on shop.fittings_products, shop.fittings_product_costs, shop.fittings_settings,
+  shop.fittings_private_config, shop.fittings_orders, shop.fittings_order_items
   to service_role;
 
 -- Marks a pending order paid and takes its items out of stock, all or nothing.
 -- Safe to call twice: the second call finds no pending order and returns false.
-create or replace function public.fittings_fulfill_order(p_order_id uuid, p_details jsonb)
+create or replace function shop.fittings_fulfill_order(p_order_id uuid, p_details jsonb)
 returns boolean
 language plpgsql
-set search_path = public
+set search_path = shop, public, extensions
 as $$
 declare
   v_short boolean := false;
@@ -159,10 +167,10 @@ end;
 $$;
 
 -- Adds or subtracts stock without a read-then-write race against sales.
-create or replace function public.fittings_adjust_qty(p_id text, p_delta integer)
+create or replace function shop.fittings_adjust_qty(p_id text, p_delta integer)
 returns integer
 language sql
-set search_path = public
+set search_path = shop, public, extensions
 as $$
   update fittings_products
     set qty = greatest(qty + p_delta, 0), updated_at = now()
@@ -170,17 +178,17 @@ as $$
   returning qty;
 $$;
 
-revoke all on function public.fittings_fulfill_order(uuid, jsonb) from public, anon, authenticated;
-revoke all on function public.fittings_adjust_qty(text, integer) from public, anon, authenticated;
-grant execute on function public.fittings_fulfill_order(uuid, jsonb) to service_role;
-grant execute on function public.fittings_adjust_qty(text, integer) to service_role;
+revoke all on function shop.fittings_fulfill_order(uuid, jsonb) from public, anon, authenticated;
+revoke all on function shop.fittings_adjust_qty(text, integer) from public, anon, authenticated;
+grant execute on function shop.fittings_fulfill_order(uuid, jsonb) to service_role;
+grant execute on function shop.fittings_adjust_qty(text, integer) to service_role;
 
 -- Product photos: public to view, written only by the server.
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values ('fittings-photos', 'fittings-photos', true, 5242880, array['image/jpeg','image/png','image/webp'])
 on conflict (id) do nothing;
 
-insert into public.fittings_settings (id) values (1) on conflict (id) do nothing;
+insert into shop.fittings_settings (id) values (1) on conflict (id) do nothing;
 
 -- ---------------------------------------------------------------------------
 -- Inventory survey: photographing inventory cards and parts bins at a location.
@@ -190,16 +198,16 @@ insert into public.fittings_settings (id) values (1) on conflict (id) do nothing
 -- so the order photos were taken in can never change the answer.
 -- ---------------------------------------------------------------------------
 
-create table if not exists public.fittings_locations (
+create table if not exists shop.fittings_locations (
   id uuid primary key default gen_random_uuid(),
   name text not null,
   created_at timestamptz not null default now()
 );
 
-create table if not exists public.fittings_captures (
+create table if not exists shop.fittings_captures (
   -- Made on the phone, so an upload that is retried never creates a second row.
   id uuid primary key,
-  location_id uuid not null references public.fittings_locations(id) on delete cascade,
+  location_id uuid not null references shop.fittings_locations(id) on delete cascade,
   kind text not null check (kind in ('card','bin','code','manual')),
   captured_at timestamptz not null,
   created_at timestamptz not null default now(),
@@ -224,14 +232,14 @@ create table if not exists public.fittings_captures (
 );
 
 create index if not exists fittings_captures_location_idx
-  on public.fittings_captures(location_id, captured_at desc);
+  on shop.fittings_captures(location_id, captured_at desc);
 
 -- ---------------------------------------------------------------------------
 -- Supplier photos: product photos read from a distributor's own catalog pages.
 -- They stay on hold, out of the shop, until permission is recorded in Settings.
 -- ---------------------------------------------------------------------------
 
-create table if not exists public.fittings_supplier_index (
+create table if not exists shop.fittings_supplier_index (
   source text not null,
   part_norm text not null,
   part_number text not null,
@@ -242,9 +250,9 @@ create table if not exists public.fittings_supplier_index (
   primary key (source, part_norm)
 );
 
-create table if not exists public.fittings_supplier_photos (
+create table if not exists shop.fittings_supplier_photos (
   id uuid primary key default gen_random_uuid(),
-  product_id text not null references public.fittings_products(id) on delete cascade,
+  product_id text not null references shop.fittings_products(id) on delete cascade,
   source text not null,
   page_url text not null default '',
   image_url text not null,
@@ -254,16 +262,16 @@ create table if not exists public.fittings_supplier_photos (
   unique (product_id, image_url)
 );
 
-alter table public.fittings_locations enable row level security;
-alter table public.fittings_captures enable row level security;
-alter table public.fittings_supplier_index enable row level security;
-alter table public.fittings_supplier_photos enable row level security;
+alter table shop.fittings_locations enable row level security;
+alter table shop.fittings_captures enable row level security;
+alter table shop.fittings_supplier_index enable row level security;
+alter table shop.fittings_supplier_photos enable row level security;
 
-revoke all on public.fittings_locations, public.fittings_captures,
-  public.fittings_supplier_index, public.fittings_supplier_photos
+revoke all on shop.fittings_locations, shop.fittings_captures,
+  shop.fittings_supplier_index, shop.fittings_supplier_photos
   from anon, authenticated;
-grant all on public.fittings_locations, public.fittings_captures,
-  public.fittings_supplier_index, public.fittings_supplier_photos
+grant all on shop.fittings_locations, shop.fittings_captures,
+  shop.fittings_supplier_index, shop.fittings_supplier_photos
   to service_role;
 
 -- Survey photos and supplier photos on hold: never public, read only through the server.
@@ -288,9 +296,9 @@ on conflict (id) do nothing;
 --  10 documents            fittings_documents
 -- ---------------------------------------------------------------------------
 
-create table if not exists public.fittings_categories (
+create table if not exists shop.fittings_categories (
   id text primary key,
-  parent_id text references public.fittings_categories(id) on delete restrict,
+  parent_id text references shop.fittings_categories(id) on delete restrict,
   name text not null,
   sort integer not null default 0,
   -- [{key, label, type: text|number|choice|multi|bool, filter: chips|list|range|toggle|search|none,
@@ -304,8 +312,8 @@ create table if not exists public.fittings_categories (
   check (parent_id is null or parent_id <> id)
 );
 
-alter table public.fittings_products
-  add column if not exists category_id text references public.fittings_categories(id) on delete set null,
+alter table shop.fittings_products
+  add column if not exists category_id text references shop.fittings_categories(id) on delete set null,
   add column if not exists brand text not null default '',
   add column if not exists family text not null default '',
   add column if not exists variant_label text not null default '',
@@ -319,28 +327,28 @@ alter table public.fittings_products
   add column if not exists freight_class text not null default '';
 
 do $$ begin
-  alter table public.fittings_products add constraint fittings_products_kind_chk
+  alter table shop.fittings_products add constraint fittings_products_kind_chk
     check (kind in ('part','kit','service'));
 exception when duplicate_object then null; end $$;
 do $$ begin
-  alter table public.fittings_products add constraint fittings_products_ship_chk
+  alter table shop.fittings_products add constraint fittings_products_ship_chk
     check (ship_class in ('parcel','freight','oversize','restricted','pickup'));
 exception when duplicate_object then null; end $$;
 do $$ begin
-  alter table public.fittings_products add constraint fittings_products_specs_chk
+  alter table shop.fittings_products add constraint fittings_products_specs_chk
     check (jsonb_typeof(specs) = 'object');
 exception when duplicate_object then null; end $$;
 do $$ begin
-  alter table public.fittings_products add constraint fittings_products_dims_chk
+  alter table shop.fittings_products add constraint fittings_products_dims_chk
     check ((weight_oz is null or weight_oz > 0) and (length_in is null or length_in > 0)
        and (width_in is null or width_in > 0) and (height_in is null or height_in > 0));
 exception when duplicate_object then null; end $$;
 
-create index if not exists fittings_products_category_idx on public.fittings_products(category_id);
-create index if not exists fittings_products_family_idx on public.fittings_products(family) where family <> '';
+create index if not exists fittings_products_category_idx on shop.fittings_products(category_id);
+create index if not exists fittings_products_family_idx on shop.fittings_products(family) where family <> '';
 
-create table if not exists public.fittings_xrefs (
-  product_id text not null references public.fittings_products(id) on delete cascade,
+create table if not exists shop.fittings_xrefs (
+  product_id text not null references shop.fittings_products(id) on delete cascade,
   kind text not null check (kind in ('oem','aftermarket','supplier','superseded','upc')),
   brand text not null default '',
   number text not null,
@@ -348,9 +356,9 @@ create table if not exists public.fittings_xrefs (
   number_norm text not null check (number_norm ~ '^[A-Z0-9]+$'),
   primary key (product_id, kind, brand, number_norm)
 );
-create index if not exists fittings_xrefs_number_idx on public.fittings_xrefs(number_norm);
+create index if not exists fittings_xrefs_number_idx on shop.fittings_xrefs(number_norm);
 
-create table if not exists public.fittings_machines (
+create table if not exists shop.fittings_machines (
   id uuid primary key default gen_random_uuid(),
   make text not null,
   model text not null,
@@ -364,10 +372,10 @@ create table if not exists public.fittings_machines (
   unique (make, model)
 );
 
-create table if not exists public.fittings_fitment (
+create table if not exists shop.fittings_fitment (
   id uuid primary key default gen_random_uuid(),
-  product_id text not null references public.fittings_products(id) on delete cascade,
-  machine_id uuid not null references public.fittings_machines(id) on delete cascade,
+  product_id text not null references shop.fittings_products(id) on delete cascade,
+  machine_id uuid not null references shop.fittings_machines(id) on delete cascade,
   position text not null default '',
   serial_from text not null default '',
   serial_to text not null default '',
@@ -377,11 +385,11 @@ create table if not exists public.fittings_fitment (
   note text not null default '',
   unique (product_id, machine_id, position, serial_from)
 );
-create index if not exists fittings_fitment_machine_idx on public.fittings_fitment(machine_id);
+create index if not exists fittings_fitment_machine_idx on shop.fittings_fitment(machine_id);
 
-create table if not exists public.fittings_kit_items (
-  kit_id text not null references public.fittings_products(id) on delete cascade,
-  product_id text not null references public.fittings_products(id) on delete restrict,
+create table if not exists shop.fittings_kit_items (
+  kit_id text not null references shop.fittings_products(id) on delete cascade,
+  product_id text not null references shop.fittings_products(id) on delete restrict,
   qty integer not null check (qty > 0),
   sort integer not null default 0,
   primary key (kit_id, product_id),
@@ -389,26 +397,26 @@ create table if not exists public.fittings_kit_items (
 );
 
 -- Places other than our own shelf: a dealer's shelf (counted on a survey) or a supplier.
-alter table public.fittings_locations
+alter table shop.fittings_locations
   add column if not exists kind text not null default 'survey',
   add column if not exists lead_days integer,
   add column if not exists phone text not null default '';
 do $$ begin
-  alter table public.fittings_locations add constraint fittings_locations_kind_chk
+  alter table shop.fittings_locations add constraint fittings_locations_kind_chk
     check (kind in ('survey','dealer','supplier'));
 exception when duplicate_object then null; end $$;
 
-create table if not exists public.fittings_stock (
-  product_id text not null references public.fittings_products(id) on delete cascade,
-  location_id uuid not null references public.fittings_locations(id) on delete cascade,
+create table if not exists shop.fittings_stock (
+  product_id text not null references shop.fittings_products(id) on delete cascade,
+  location_id uuid not null references shop.fittings_locations(id) on delete cascade,
   qty integer not null check (qty >= 0),
   counted_at timestamptz not null default now(),
   lead_days integer check (lead_days is null or lead_days >= 0),
   primary key (product_id, location_id)
 );
 
-create table if not exists public.fittings_surcharges (
-  product_id text not null references public.fittings_products(id) on delete cascade,
+create table if not exists shop.fittings_surcharges (
+  product_id text not null references shop.fittings_products(id) on delete cascade,
   kind text not null check (kind in ('core','tire_fee','hazmat','deposit')),
   amount_cents integer not null check (amount_cents >= 0),
   refundable boolean not null default false,
@@ -416,26 +424,26 @@ create table if not exists public.fittings_surcharges (
   primary key (product_id, kind)
 );
 
-create table if not exists public.fittings_documents (
+create table if not exists shop.fittings_documents (
   id uuid primary key default gen_random_uuid(),
-  product_id text references public.fittings_products(id) on delete cascade,
-  machine_id uuid references public.fittings_machines(id) on delete cascade,
+  product_id text references shop.fittings_products(id) on delete cascade,
+  machine_id uuid references shop.fittings_machines(id) on delete cascade,
   kind text not null check (kind in ('spec','sds','install','manual','parts_catalog','other')),
   title text not null,
   url text not null check (url ~ '^https?://'),
   sort integer not null default 0,
   check (num_nonnulls(product_id, machine_id) = 1)
 );
-create index if not exists fittings_documents_product_idx on public.fittings_documents(product_id);
+create index if not exists fittings_documents_product_idx on shop.fittings_documents(product_id);
 
-alter table public.fittings_categories enable row level security;
-alter table public.fittings_xrefs enable row level security;
-alter table public.fittings_machines enable row level security;
-alter table public.fittings_fitment enable row level security;
-alter table public.fittings_kit_items enable row level security;
-alter table public.fittings_stock enable row level security;
-alter table public.fittings_surcharges enable row level security;
-alter table public.fittings_documents enable row level security;
+alter table shop.fittings_categories enable row level security;
+alter table shop.fittings_xrefs enable row level security;
+alter table shop.fittings_machines enable row level security;
+alter table shop.fittings_fitment enable row level security;
+alter table shop.fittings_kit_items enable row level security;
+alter table shop.fittings_stock enable row level security;
+alter table shop.fittings_surcharges enable row level security;
+alter table shop.fittings_documents enable row level security;
 
 -- Shopper-facing structures are public to read. Stock at other places is not:
 -- a dealer's shelf counts stay private until that dealer agrees to show them.
@@ -444,27 +452,27 @@ declare t text;
 begin
   foreach t in array array['fittings_categories','fittings_xrefs','fittings_machines','fittings_fitment',
                            'fittings_kit_items','fittings_surcharges','fittings_documents'] loop
-    execute format('drop policy if exists "%s is public" on public.%I', t, t);
-    execute format('create policy "%s is public" on public.%I for select to anon, authenticated using (true)', t, t);
+    execute format('drop policy if exists "%s is public" on shop.%I', t, t);
+    execute format('create policy "%s is public" on shop.%I for select to anon, authenticated using (true)', t, t);
   end loop;
 end $$;
 
-revoke all on public.fittings_categories, public.fittings_xrefs, public.fittings_machines,
-  public.fittings_fitment, public.fittings_kit_items, public.fittings_stock,
-  public.fittings_surcharges, public.fittings_documents from anon, authenticated;
-grant select on public.fittings_categories, public.fittings_xrefs, public.fittings_machines,
-  public.fittings_fitment, public.fittings_kit_items, public.fittings_surcharges,
-  public.fittings_documents to anon, authenticated;
-grant all on public.fittings_categories, public.fittings_xrefs, public.fittings_machines,
-  public.fittings_fitment, public.fittings_kit_items, public.fittings_stock,
-  public.fittings_surcharges, public.fittings_documents to service_role;
+revoke all on shop.fittings_categories, shop.fittings_xrefs, shop.fittings_machines,
+  shop.fittings_fitment, shop.fittings_kit_items, shop.fittings_stock,
+  shop.fittings_surcharges, shop.fittings_documents from anon, authenticated;
+grant select on shop.fittings_categories, shop.fittings_xrefs, shop.fittings_machines,
+  shop.fittings_fitment, shop.fittings_kit_items, shop.fittings_surcharges,
+  shop.fittings_documents to anon, authenticated;
+grant all on shop.fittings_categories, shop.fittings_xrefs, shop.fittings_machines,
+  shop.fittings_fitment, shop.fittings_kit_items, shop.fittings_stock,
+  shop.fittings_surcharges, shop.fittings_documents to service_role;
 
 -- Saves an item's catalog details in one go: product columns, then each list
 -- replaced whole. Anything missing from p_details is left as it was.
-create or replace function public.fittings_save_details(p_id text, p_details jsonb)
+create or replace function shop.fittings_save_details(p_id text, p_details jsonb)
 returns void
 language plpgsql
-set search_path = public
+set search_path = shop, public, extensions
 as $$
 declare
   d jsonb := p_details;
@@ -545,12 +553,12 @@ begin
 end;
 $$;
 
-revoke all on function public.fittings_save_details(text, jsonb) from public, anon, authenticated;
-grant execute on function public.fittings_save_details(text, jsonb) to service_role;
+revoke all on function shop.fittings_save_details(text, jsonb) from public, anon, authenticated;
+grant execute on function shop.fittings_save_details(text, jsonb) to service_role;
 
 -- The category tree for the launch categories. Re-running updates names,
 -- order and spec templates, but never switches a category on or off.
-insert into public.fittings_categories (id, parent_id, name, sort, spec_fields, fitment, default_ship, live, note)
+insert into shop.fittings_categories (id, parent_id, name, sort, spec_fields, fitment, default_ship, live, note)
 values
   -- Six departments. Every part sits in one place; the machine it fits, its
   -- condition and its brand are filters, never extra branches.
@@ -661,7 +669,7 @@ on conflict (id) do update set
 
 -- The hydraulic fittings move onto the tree by their old type. Items already
 -- placed in a category are left alone.
-update public.fittings_products set category_id = case type
+update shop.fittings_products set category_id = case type
     when 'orb-plug' then 'orb-plugs'
     when 'jic-cap' then 'jic-caps'
     when 'jic-plug' then 'jic-plugs'
@@ -676,13 +684,13 @@ where category_id is null;
 -- requests customers send, and which places can build a hose and how fast.
 -- ---------------------------------------------------------------------------
 
-alter table public.fittings_locations
+alter table shop.fittings_locations
   add column if not exists builds_hoses boolean not null default false,
   add column if not exists one_hour boolean not null default false,
   add column if not exists hours text not null default '',
   add column if not exists hose_lines text not null default '';
 
-create table if not exists public.fittings_hose_builds (
+create table if not exists shop.fittings_hose_builds (
   tag text primary key check (tag ~ '^BH-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$'),
   spec jsonb not null check (jsonb_typeof(spec) = 'object'),
   source text not null default 'customer' check (source in ('customer','shop','oem')),
@@ -692,12 +700,12 @@ create table if not exists public.fittings_hose_builds (
   model text not null default '',
   created_at timestamptz not null default now()
 );
-create index if not exists fittings_hose_builds_oem_idx on public.fittings_hose_builds using gin (oem_numbers);
+create index if not exists fittings_hose_builds_oem_idx on shop.fittings_hose_builds using gin (oem_numbers);
 
-create table if not exists public.fittings_hose_requests (
+create table if not exists shop.fittings_hose_requests (
   id uuid primary key default gen_random_uuid(),
   number bigint generated always as identity (start with 5001),
-  tag text not null references public.fittings_hose_builds(tag) on delete restrict,
+  tag text not null references shop.fittings_hose_builds(tag) on delete restrict,
   mode text not null check (mode in ('now','shop')),
   status text not null default 'new' check (status in ('new','sent','building','ready','done','cancelled')),
   name text not null default '',
@@ -706,16 +714,16 @@ create table if not exists public.fittings_hose_requests (
   zip text not null default '',
   machine text not null default '',
   notes text not null default '',
-  builder_id uuid references public.fittings_locations(id) on delete set null,
+  builder_id uuid references shop.fittings_locations(id) on delete set null,
   created_at timestamptz not null default now(),
   check (phone <> '' or email <> '')
 );
-create index if not exists fittings_hose_requests_new_idx on public.fittings_hose_requests(status, created_at desc);
+create index if not exists fittings_hose_requests_new_idx on shop.fittings_hose_requests(status, created_at desc);
 
-alter table public.fittings_hose_builds enable row level security;
-alter table public.fittings_hose_requests enable row level security;
-revoke all on public.fittings_hose_builds, public.fittings_hose_requests from anon, authenticated;
-grant all on public.fittings_hose_builds, public.fittings_hose_requests to service_role;
+alter table shop.fittings_hose_builds enable row level security;
+alter table shop.fittings_hose_requests enable row level security;
+revoke all on shop.fittings_hose_builds, shop.fittings_hose_requests from anon, authenticated;
+grant all on shop.fittings_hose_builds, shop.fittings_hose_requests to service_role;
 
 
 -- ---------------------------------------------------------------------------
@@ -728,7 +736,7 @@ grant all on public.fittings_hose_builds, public.fittings_hose_requests to servi
 --   trigram search on numbers and names          "86-572263" finds "86572263"
 -- ---------------------------------------------------------------------------
 
-alter table public.fittings_products
+alter table shop.fittings_products
   add column if not exists condition text not null default 'new',
   add column if not exists universal boolean not null default false,
   add column if not exists warranty_months integer,
@@ -737,20 +745,20 @@ alter table public.fittings_products
   add column if not exists oem_list_price_cents integer;
 
 do $$ begin
-  alter table public.fittings_products add constraint fittings_products_condition_chk
+  alter table shop.fittings_products add constraint fittings_products_condition_chk
     check (condition in ('new','reman','rebuilt','used','surplus'));
 exception when duplicate_object then null; end $$;
 do $$ begin
-  alter table public.fittings_products add constraint fittings_products_price_mode_chk
+  alter table shop.fittings_products add constraint fittings_products_price_mode_chk
     check (price_mode in ('cart','quote'));
 exception when duplicate_object then null; end $$;
 do $$ begin
-  alter table public.fittings_products add constraint fittings_products_warranty_chk
+  alter table shop.fittings_products add constraint fittings_products_warranty_chk
     check ((warranty_months is null or warranty_months between 0 and 120)
        and (oem_list_price_cents is null or oem_list_price_cents >= 0));
 exception when duplicate_object then null; end $$;
 
-alter table public.fittings_machines
+alter table shop.fittings_machines
   -- Cat names a machine by a three-character serial prefix plus a number range.
   add column if not exists serial_prefixes text[] not null default '{}',
   -- [{serial, note}]: where the maker changed parts partway through a model.
@@ -758,29 +766,29 @@ alter table public.fittings_machines
   add column if not exists sort integer not null default 0;
 
 do $$ begin
-  alter table public.fittings_machines add constraint fittings_machines_kind_chk
+  alter table shop.fittings_machines add constraint fittings_machines_kind_chk
     check (kind in ('tractor','combine','header','hay','planter','tillage','sprayer',
                     'backhoe','excavator','dozer','wheel-loader','skid-steer','track-loader','articulated-truck','other'));
 exception when duplicate_object then null; end $$;
 do $$ begin
-  alter table public.fittings_machines add constraint fittings_machines_breaks_chk
+  alter table shop.fittings_machines add constraint fittings_machines_breaks_chk
     check (jsonb_typeof(serial_breaks) = 'array' and (year_from is null or year_to is null or year_from <= year_to));
 exception when duplicate_object then null; end $$;
-create index if not exists fittings_machines_make_idx on public.fittings_machines(make, kind, series);
+create index if not exists fittings_machines_make_idx on shop.fittings_machines(make, kind, series);
 
-alter table public.fittings_fitment
+alter table shop.fittings_fitment
   add column if not exists serial_prefix text not null default '';
-alter table public.fittings_fitment
+alter table shop.fittings_fitment
   drop constraint if exists fittings_fitment_product_id_machine_id_position_serial_from_key;
 do $$ begin
-  alter table public.fittings_fitment add constraint fittings_fitment_one_row
+  alter table shop.fittings_fitment add constraint fittings_fitment_one_row
     unique (product_id, machine_id, position, serial_prefix, serial_from);
 exception when duplicate_object or duplicate_table then null; end $$;
-create index if not exists fittings_fitment_product_idx on public.fittings_fitment(product_id);
+create index if not exists fittings_fitment_product_idx on shop.fittings_fitment(product_id);
 
-create table if not exists public.fittings_diagrams (
+create table if not exists shop.fittings_diagrams (
   id uuid primary key default gen_random_uuid(),
-  machine_id uuid not null references public.fittings_machines(id) on delete cascade,
+  machine_id uuid not null references shop.fittings_machines(id) on delete cascade,
   section text not null,
   title text not null,
   image_url text not null default '' check (image_url = '' or image_url ~ '^https?://'),
@@ -788,13 +796,13 @@ create table if not exists public.fittings_diagrams (
   source text not null default '',
   sort integer not null default 0
 );
-create index if not exists fittings_diagrams_machine_idx on public.fittings_diagrams(machine_id, sort);
+create index if not exists fittings_diagrams_machine_idx on shop.fittings_diagrams(machine_id, sort);
 
-create table if not exists public.fittings_diagram_parts (
-  diagram_id uuid not null references public.fittings_diagrams(id) on delete cascade,
+create table if not exists shop.fittings_diagram_parts (
+  diagram_id uuid not null references shop.fittings_diagrams(id) on delete cascade,
   callout text not null,
   -- Either one of our items, or just the number the drawing lists.
-  product_id text references public.fittings_products(id) on delete set null,
+  product_id text references shop.fittings_products(id) on delete set null,
   number text not null default '',
   number_norm text not null default '' check (number_norm = '' or number_norm ~ '^[A-Z0-9]+$'),
   qty integer not null default 1 check (qty > 0),
@@ -802,7 +810,7 @@ create table if not exists public.fittings_diagram_parts (
   primary key (diagram_id, callout, number_norm)
 );
 
-create table if not exists public.fittings_quote_requests (
+create table if not exists shop.fittings_quote_requests (
   id uuid primary key default gen_random_uuid(),
   number bigint generated always as identity (start with 7001),
   -- [{number, qty, product_id?, note?}]: one line per part asked about.
@@ -819,26 +827,26 @@ create table if not exists public.fittings_quote_requests (
   created_at timestamptz not null default now(),
   check (phone <> '' or email <> '')
 );
-create index if not exists fittings_quote_requests_new_idx on public.fittings_quote_requests(status, created_at desc);
+create index if not exists fittings_quote_requests_new_idx on shop.fittings_quote_requests(status, created_at desc);
 
-alter table public.fittings_diagrams enable row level security;
-alter table public.fittings_diagram_parts enable row level security;
-alter table public.fittings_quote_requests enable row level security;
+alter table shop.fittings_diagrams enable row level security;
+alter table shop.fittings_diagram_parts enable row level security;
+alter table shop.fittings_quote_requests enable row level security;
 do $$
 declare t text;
 begin
   foreach t in array array['fittings_diagrams','fittings_diagram_parts'] loop
-    execute format('drop policy if exists "%s is public" on public.%I', t, t);
-    execute format('create policy "%s is public" on public.%I for select to anon, authenticated using (true)', t, t);
+    execute format('drop policy if exists "%s is public" on shop.%I', t, t);
+    execute format('create policy "%s is public" on shop.%I for select to anon, authenticated using (true)', t, t);
   end loop;
 end $$;
-revoke all on public.fittings_diagrams, public.fittings_diagram_parts, public.fittings_quote_requests from anon, authenticated;
-grant select on public.fittings_diagrams, public.fittings_diagram_parts to anon, authenticated;
-grant all on public.fittings_diagrams, public.fittings_diagram_parts, public.fittings_quote_requests to service_role;
+revoke all on shop.fittings_diagrams, shop.fittings_diagram_parts, shop.fittings_quote_requests from anon, authenticated;
+grant select on shop.fittings_diagrams, shop.fittings_diagram_parts to anon, authenticated;
+grant all on shop.fittings_diagrams, shop.fittings_diagram_parts, shop.fittings_quote_requests to service_role;
 
 create extension if not exists pg_trgm with schema extensions;
-create index if not exists fittings_xrefs_number_trgm on public.fittings_xrefs using gin (number_norm extensions.gin_trgm_ops);
-create index if not exists fittings_products_name_trgm on public.fittings_products using gin (lower(name) extensions.gin_trgm_ops);
+create index if not exists fittings_xrefs_number_trgm on shop.fittings_xrefs using gin (number_norm extensions.gin_trgm_ops);
+create index if not exists fittings_products_name_trgm on shop.fittings_products using gin (lower(name) extensions.gin_trgm_ops);
 
 -- ---------------------------------------------------------------------------
 -- Machine serial runs (2026-11-25): which machine, and which year or series of
@@ -847,9 +855,9 @@ create index if not exists fittings_products_name_trgm on public.fittings_produc
 -- not publish the table.
 -- ---------------------------------------------------------------------------
 
-create table if not exists public.fittings_machine_serials (
+create table if not exists shop.fittings_machine_serials (
   id uuid primary key default gen_random_uuid(),
-  machine_id uuid not null references public.fittings_machines(id) on delete cascade,
+  machine_id uuid not null references shop.fittings_machines(id) on delete cascade,
   prefix text not null default '' check (prefix ~ '^[A-Z0-9]{0,6}$'),
   serial_from text not null default '',
   serial_to text not null default '',
@@ -861,12 +869,12 @@ create table if not exists public.fittings_machine_serials (
   batch text not null default '',
   check (serial_from <> '' or serial_to <> '' or prefix <> '')
 );
-create index if not exists fittings_machine_serials_machine_idx on public.fittings_machine_serials(machine_id);
-create index if not exists fittings_machine_serials_prefix_idx on public.fittings_machine_serials(prefix);
+create index if not exists fittings_machine_serials_machine_idx on shop.fittings_machine_serials(machine_id);
+create index if not exists fittings_machine_serials_prefix_idx on shop.fittings_machine_serials(prefix);
 
-alter table public.fittings_machine_serials enable row level security;
-revoke all on public.fittings_machine_serials from anon, authenticated;
-grant all on public.fittings_machine_serials to service_role;
+alter table shop.fittings_machine_serials enable row level security;
+revoke all on shop.fittings_machine_serials from anon, authenticated;
+grant all on shop.fittings_machine_serials to service_role;
 
 -- ---------------------------------------------------------------------------
 -- Checkout rules (2026-11-26): cores and other charges at checkout, core
@@ -875,30 +883,30 @@ grant all on public.fittings_machine_serials to service_role;
 --   Core credit: full within 30 days of the sale, 85% from day 31 to 60,
 --   nothing after day 60 (lib/checkout-rules.ts).
 -- ---------------------------------------------------------------------------
-alter table public.fittings_settings
+alter table shop.fittings_settings
   add column if not exists ship_cutoff text not null default '14:00',
   add column if not exists ship_tz text not null default 'America/Chicago';
 do $$
 begin
   if not exists (select 1 from pg_constraint where conname = 'fittings_settings_cutoff_ck') then
-    alter table public.fittings_settings add constraint fittings_settings_cutoff_ck
+    alter table shop.fittings_settings add constraint fittings_settings_cutoff_ck
       check (ship_cutoff ~ '^([01]?[0-9]|2[0-3]):[0-5][0-9]$');
   end if;
   if not exists (select 1 from pg_constraint where conname = 'fittings_settings_tz_ck') then
-    alter table public.fittings_settings add constraint fittings_settings_tz_ck
+    alter table shop.fittings_settings add constraint fittings_settings_tz_ck
       check (ship_tz in ('America/New_York','America/Chicago','America/Denver','America/Los_Angeles'));
   end if;
 end $$;
 
-alter table public.fittings_orders
+alter table shop.fittings_orders
   add column if not exists charges_cents integer not null default 0 check (charges_cents >= 0),
   add column if not exists ship_method text not null default 'parcel' check (ship_method in ('parcel','pickup'));
 
 -- One row per item and kind of charge on an order: kept apart from the order
 -- items so the stock count never moves for a charge.
-create table if not exists public.fittings_order_charges (
+create table if not exists shop.fittings_order_charges (
   id bigint generated always as identity primary key,
-  order_id uuid not null references public.fittings_orders(id) on delete cascade,
+  order_id uuid not null references shop.fittings_orders(id) on delete cascade,
   product_id text not null,
   kind text not null check (kind in ('core','tire_fee','hazmat','deposit')),
   label text not null,
@@ -909,12 +917,12 @@ create table if not exists public.fittings_order_charges (
   returned_qty integer not null default 0 check (returned_qty >= 0 and returned_qty <= qty),
   refunded_cents integer not null default 0 check (refunded_cents >= 0 and refunded_cents <= total_cents)
 );
-create index if not exists fittings_order_charges_order_idx on public.fittings_order_charges(order_id);
+create index if not exists fittings_order_charges_order_idx on shop.fittings_order_charges(order_id);
 
 -- Each core that comes back: how many days it took, what it earned, the refund.
-create table if not exists public.fittings_core_returns (
+create table if not exists shop.fittings_core_returns (
   id bigint generated always as identity primary key,
-  charge_id bigint not null references public.fittings_order_charges(id) on delete cascade,
+  charge_id bigint not null references shop.fittings_order_charges(id) on delete cascade,
   qty integer not null check (qty > 0),
   returned_on date not null,
   days integer not null check (days >= 0),
@@ -923,18 +931,18 @@ create table if not exists public.fittings_core_returns (
   note text not null default '',
   created_at timestamptz not null default now()
 );
-create index if not exists fittings_core_returns_charge_idx on public.fittings_core_returns(charge_id);
+create index if not exists fittings_core_returns_charge_idx on shop.fittings_core_returns(charge_id);
 
-alter table public.fittings_order_charges enable row level security;
-alter table public.fittings_core_returns enable row level security;
-revoke all on public.fittings_order_charges, public.fittings_core_returns from anon, authenticated;
-grant all on public.fittings_order_charges, public.fittings_core_returns to service_role;
+alter table shop.fittings_order_charges enable row level security;
+alter table shop.fittings_core_returns enable row level security;
+revoke all on shop.fittings_order_charges, shop.fittings_core_returns from anon, authenticated;
+grant all on shop.fittings_order_charges, shop.fittings_core_returns to service_role;
 
 -- A cart that ships by truck becomes a quote request.
-alter table public.fittings_quote_requests drop constraint if exists fittings_quote_requests_source_check;
-alter table public.fittings_quote_requests add constraint fittings_quote_requests_source_check
+alter table shop.fittings_quote_requests drop constraint if exists fittings_quote_requests_source_check;
+alter table shop.fittings_quote_requests add constraint fittings_quote_requests_source_check
   check (source in ('product','list','phone','freight'));
-alter table public.fittings_quote_requests
+alter table shop.fittings_quote_requests
   add column if not exists answer text not null default '',
   add column if not exists updated_at timestamptz not null default now();
 
@@ -944,5 +952,5 @@ alter table public.fittings_quote_requests
 -- item USA when the supplier states it for that item: the FTC's rule for an
 -- unqualified "Made in USA" is all or virtually all of it made here.
 -- ---------------------------------------------------------------------------
-alter table public.fittings_products
+alter table shop.fittings_products
   add column if not exists origin text not null default '' check (length(origin) <= 40);

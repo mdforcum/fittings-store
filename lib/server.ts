@@ -61,7 +61,7 @@ export async function secretKeyProblem(): Promise<string | null> {
   if (!rejected) {
     try {
       const res = await fetch(`${env.url}/rest/v1/fittings_settings?select=id&limit=1`, {
-        headers: { apikey: key, Authorization: `Bearer ${key}` },
+        headers: { apikey: key, Authorization: `Bearer ${key}`, "Accept-Profile": "shop" },
         cache: "no-store",
       });
       rejected = res.status === 401 || res.status === 403;
@@ -107,18 +107,20 @@ export const T = {
   privateBucket: "fittings-private",
 } as const;
 
-const clientOptions = { auth: { persistSession: false, autoRefreshToken: false } };
+// The shop's tables live in their own schema, `shop`, beside Backroad Iron's
+// `public` (see supabase/schema.sql). Storage is unaffected by this setting.
+const clientOptions = { auth: { persistSession: false, autoRefreshToken: false }, db: { schema: "shop" } };
 
 /** Read-only client for the public catalog. Null until the public keys are set. */
 export function publicDb(): SupabaseClient | null {
   if (!env.url || !env.publishable) return null;
-  return createClient(env.url, env.publishable, clientOptions);
+  return createClient(env.url, env.publishable, clientOptions) as unknown as SupabaseClient;
 }
 
 /** Full-access client. Only ever used on the server. */
 export function adminDb(): SupabaseClient {
   if (!env.url || !env.secret) throw new Error("SUPABASE_SECRET_KEY is not set");
-  return createClient(env.url, env.secret, clientOptions);
+  return createClient(env.url, env.secret, clientOptions) as unknown as SupabaseClient;
 }
 
 export async function getCatalog(): Promise<{ products: Product[]; settings: Settings; ok: boolean }> {
