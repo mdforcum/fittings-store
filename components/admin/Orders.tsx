@@ -43,6 +43,21 @@ export default function Orders({ data, act, say }: Props) {
           </button>
         ))}
       </div>
+      {view === "open" && counts.open > 0 && (
+        <div className="inline">
+          <a
+            className="btn"
+            href={`/admin/pick?orders=${data.orders
+              .filter((o) => o.status === "paid")
+              .slice(0, 25)
+              .map((o) => o.id)
+              .join(",")}`}
+          >
+            Pick all {Math.min(counts.open, 25)} to ship
+          </a>
+          {counts.open > 25 && <span className="hint">The first 25 go on one ticket.</span>}
+        </div>
+      )}
       {shown.length === 0 && (
         <p className="empty">
           {view === "open" ? "Nothing waiting to ship." : "No orders here yet."} Paid orders appear on their own.
@@ -139,6 +154,11 @@ function OrderCard({ o, data, act, say }: { o: Order; data: AdminData; act: Act;
         <span className={`pill ${tone}`}>{statusText}</span>
         <span className="hint">{when(o.paid_at ?? o.created_at)}</span>
         <b className="mono">{money(o.total_cents)}</b>
+        {(o.status === "paid" || o.status === "shipped") && (
+          <a className="btn ghost sm" href={`/admin/pick?orders=${o.id}`}>
+            Pick ticket
+          </a>
+        )}
       </div>
       {o.stock_short && (
         <p className="warn">

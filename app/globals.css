@@ -432,3 +432,33 @@ dialog.sheet { margin: 0 0 0 auto; width: min(440px, 100%); max-width: 100%; hei
 .find-it { border-left: 4px solid var(--zinc); background: var(--sunken); padding: 10px 12px; border-radius: 6px; margin: 8px 0; }
 .find-it p { margin: 0; font-size: 1rem; line-height: 1.45; }
 .find-it .mono { margin-top: 4px; font-size: .9rem; color: var(--muted); }
+
+/* Back office: pick tickets. Big rows to tap at the shelf; plain boxes on paper. */
+.pick { max-width: 860px; margin: 0 auto; padding: 16px; display: grid; gap: 16px; }
+.pick-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; align-items: flex-end; }
+.pick-orders { list-style: none; display: grid; gap: 2px; margin-top: 6px; }
+.pick-actions { display: grid; gap: 8px; justify-items: end; }
+.pick-count { font-weight: 700; font-size: 1.1rem; }
+.pick-done { padding: 12px 14px; border-left: 4px solid var(--ok, #2f6b2f); background: var(--sunken); font-weight: 700; }
+.pick-group h2 { font-size: 1rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); border-bottom: 2px solid var(--rule); padding-bottom: 4px; margin-bottom: 6px; }
+.pick-list { list-style: none; display: grid; gap: 6px; padding: 0; margin: 0; }
+.pick-stop { border: 1px solid var(--rule); border-radius: 3px; background: var(--surface); }
+.pick-stop.done { opacity: .55; }
+.pick-stop.done .pick-what b { text-decoration: line-through; }
+.pick-check { display: grid; grid-template-columns: 32px 56px 1fr; gap: 12px; align-items: start; padding: 12px; min-height: 56px; cursor: pointer; font-size: 1.1rem; line-height: 1.35; }
+.pick-check input { width: 28px; height: 28px; margin: 0; accent-color: var(--primary); }
+.pick-qty { font: 800 1.4rem/1 var(--display); }
+.pick-what { display: grid; gap: 2px; }
+.pick-where { font-size: 1rem; }
+.pick-where .mono { white-space: nowrap; }
+.pick-split { font-size: .95rem; color: var(--muted); }
+@media (max-width: 560px) {
+  .pick-actions { justify-items: start; }
+}
+@media print {
+  .pick .pick-actions .inline, .pick .err, .pick .hint { display: none; }
+  .pick-stop { break-inside: avoid; border-color: #000; }
+  .pick-stop.done { opacity: 1; }
+  .pick-check input { appearance: none; -webkit-appearance: none; border: 2px solid #000; border-radius: 2px; }
+  .pick-check input:checked { background: #000; }
+}
