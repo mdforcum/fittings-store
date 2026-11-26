@@ -28,6 +28,7 @@ import {
 import { coreCredit, storeDate } from "@/lib/checkout-rules";
 import { placeByType } from "@/lib/foundation-server";
 import { heldMap } from "@/lib/holds";
+import { cleanHost, cleanLogo, normalizeStorefront, storefrontProblem } from "@/lib/storefront";
 import {
   NO_PLACES,
   byLocationOrder,
@@ -102,7 +103,7 @@ async function loadData(db: SupabaseClient): Promise<AdminData> {
   // Charges and quotes came later: if their tables are missing the rest of the
   // back office still loads, with these lists empty.
   const orderIds = (o.data ?? []).map((r) => r.id as string);
-  const [ch, q, h, dl, lo, oh, al] = await Promise.all([
+  const [ch, q, h, dl, lo, oh, al, sf] = await Promise.all([
     orderIds.length
       ? db.from("fittings_order_charges").select("*, returns:fittings_core_returns(*)").in("order_id", orderIds)
       : Promise.resolve({ data: [], error: null }),
@@ -115,6 +116,7 @@ async function loadData(db: SupabaseClient): Promise<AdminData> {
     orderIds.length
       ? db.from("fittings_allocations").select("order_id, product_id, location_id, qty").in("order_id", orderIds)
       : Promise.resolve({ data: [], error: null }),
+    db.from("fittings_storefronts").select("*").order("created_at"),
   ]);
   const placesReady = !dl.error && !lo.error && !oh.error;
   const fromBy = new Map<string, Allocation[]>();
@@ -158,6 +160,7 @@ async function loadData(db: SupabaseClient): Promise<AdminData> {
           onhand: onhandMap(oh.data as Array<{ product_id: unknown; location_id: unknown; qty: unknown }>),
         }
       : NO_PLACES,
+    storefronts: sf.error ? [] : ((sf.data ?? []) as Array<Record<string, unknown>>).map(normalizeStorefront),
     integrations: {
       stripe: modeOf(env.stripe, "_live_", "_test_"),
       webhook: webhook || !!process.env.STRIPE_WEBHOOK_SECRET,
@@ -295,6 +298,42 @@ async function run(action: string, a: Payload, db: SupabaseClient, origin: strin
       const ins = await db.from("fittings_dealers").insert({ name, slug }).select("id").single();
       if (ins.error) fail(/duplicate|unique/i.test(ins.error.message) ? "A dealer with that name is already set up." : ins.error.message);
       return { dealer_id: ins.data!.id };
+    }
+
+    case "storefront.save": {
+      const all = await db.from("fittings_storefronts").select("*");
+      if (all.error) fail("Storefronts aren't set up yet.");
+      const others = ((all.data ?? []) as Array<Record<string, unknown>>).map(normalizeStorefront);
+      const sfId = isId(a.storefront_id) ? (a.storefront_id as string) : "";
+      const name = str(a.name, 60).trim();
+      const row = {
+        dealer_id: isId(a.dealer_id) ? (a.dealer_id as string) : fail("Pick the dealer this store sells for."),
+        slug: sfId ? (others.find((o) => o.id === sfId)?.slug ?? slugify(name)) : slugify(name),
+        host: cleanHost(str(a.host, 120)) || null,
+        name,
+        tagline: str(a.tagline, 90).trim(),
+        phone: str(a.phone, 30).trim(),
+        email: str(a.email, 80).trim(),
+        logo_url: cleanLogo(str(a.logo_url, 300)),
+        color_header: str(a.color_header, 7).toLowerCase(),
+        color_accent: str(a.color_accent, 7).toLowerCase(),
+        color_button: str(a.color_button, 7).toLowerCase(),
+        live: a.live === true,
+      };
+      if (str(a.logo_url, 300).trim() && !row.logo_url) fail("The logo must be a file in /brands/ or an https:// image address.");
+      if (!/^#[0-9a-f]{6}$/.test(row.color_accent)) fail("Colors are written like #1a1a1a.");
+      const problem = storefrontProblem({ ...row, id: sfId }, others);
+      if (problem) fail(problem);
+      if (row.live && !row.host) fail("Add the web address before turning the store on.");
+      if (sfId) {
+        if (!others.some((o) => o.id === sfId)) fail("That store is gone. Reload the page.");
+        await must(db.from("fittings_storefronts").update(row).eq("id", sfId));
+      } else {
+        const ins = await db.from("fittings_storefronts").insert(row).select("id").single();
+        if (ins.error) fail(ins.error.message);
+        return { storefront_id: ins.data!.id };
+      }
+      return {};
     }
 
     case "location.save": {

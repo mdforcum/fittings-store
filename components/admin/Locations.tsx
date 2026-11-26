@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { AdminData } from "@/lib/admin-types";
 import { normCode, type Dealer, type StoreLocation } from "@/lib/places";
+import type { Storefront } from "@/lib/storefront";
 import type { Act, Say } from "../Admin";
 
 type Props = { data: AdminData; act: Act; say: Say };
@@ -96,6 +97,7 @@ function DealerBlock({ dealer, data, act, say }: { dealer: Dealer; data: AdminDa
           Add a location for {dealer.name}
         </button>
       )}
+      <StorefrontBlock dealer={dealer} data={data} act={act} say={say} />
     </section>
   );
 }
@@ -194,6 +196,131 @@ function LocationForm({
         </button>
         {onDone && (
           <button type="button" className="btn ghost sm" onClick={onDone}>
+            Cancel
+          </button>
+        )}
+      </div>
+    </form>
+  );
+}
+
+/** A dealer's own branded store: shown at their web address, selling only their stock. */
+function StorefrontBlock({ dealer, data, act, say }: { dealer: Dealer; data: AdminData; act: Act; say: Say }) {
+  const sf = (data.storefronts ?? []).find((x) => x.dealer_id === dealer.id);
+  const [open, setOpen] = useState(false);
+  if (!sf && !open) {
+    return (
+      <button type="button" className="btn ghost sm" onClick={() => setOpen(true)}>
+        Set up a branded store for {dealer.name}
+      </button>
+    );
+  }
+  return <StorefrontForm key={sf?.id ?? "new"} dealer={dealer} sf={sf} act={act} say={say} onCancel={sf ? undefined : () => setOpen(false)} />;
+}
+
+function StorefrontForm({
+  dealer,
+  sf,
+  act,
+  say,
+  onCancel,
+}: {
+  dealer: Dealer;
+  sf?: Storefront;
+  act: Act;
+  say: Say;
+  onCancel?: () => void;
+}) {
+  const id = sf?.id ?? `new-${dealer.id}`;
+  const [f, setF] = useState({
+    name: sf?.name ?? dealer.name,
+    host: sf?.host ?? "",
+    tagline: sf?.tagline ?? "",
+    phone: sf?.phone ?? "",
+    email: sf?.email ?? "",
+    logo_url: sf?.logo_url ?? "",
+    color_header: sf?.color_header ?? "#1a1a1a",
+    color_accent: sf?.color_accent ?? "#e81820",
+    color_button: sf?.color_button ?? "#b3121a",
+    live: sf?.live ?? false,
+  });
+  const [busy, setBusy] = useState(false);
+  const set = (k: Exclude<keyof typeof f, "live">) => (e: React.ChangeEvent<HTMLInputElement>) => setF({ ...f, [k]: e.target.value });
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    const done = await act("storefront.save", { ...f, dealer_id: dealer.id, ...(sf ? { storefront_id: sf.id } : {}) });
+    setBusy(false);
+    if (done) say(sf ? "Store saved" : `Set up ${f.name.trim()}'s store`);
+  }
+
+  const color = (k: "color_header" | "color_accent" | "color_button", label: string) => (
+    <label htmlFor={`${k}-${id}`}>
+      {label}
+      <span className="sf-color">
+        <input type="color" aria-label={`${label}, picker`} value={f[k]} onChange={set(k)} />
+        <input id={`${k}-${id}`} maxLength={7} autoComplete="off" value={f[k]} onChange={set(k)} />
+      </span>
+    </label>
+  );
+
+  return (
+    <form className="form loc-form sf-form" onSubmit={save} aria-label={`${dealer.name} branded store`}>
+      <h3>Branded store</h3>
+      <p className="hint">
+        Shows {dealer.name}&apos;s name, logo and colors at their own web address, and sells only the parts at their locations.
+        Orders are filled from their shelves.
+      </p>
+      <div className="two">
+        <label htmlFor={`sfn-${id}`}>
+          Store name
+          <input id={`sfn-${id}`} maxLength={60} autoComplete="off" value={f.name} onChange={set("name")} />
+        </label>
+        <label htmlFor={`sfh-${id}`}>
+          Web address
+          <input id={`sfh-${id}`} maxLength={120} autoComplete="off" placeholder="parts.example.com" value={f.host} onChange={set("host")} />
+        </label>
+      </div>
+      <label htmlFor={`sft-${id}`}>
+        Headline (optional)
+        <input id={`sft-${id}`} maxLength={90} autoComplete="off" value={f.tagline} onChange={set("tagline")} />
+      </label>
+      <div className="two">
+        <label htmlFor={`sfp-${id}`}>
+          Customer phone
+          <input id={`sfp-${id}`} maxLength={30} autoComplete="off" value={f.phone} onChange={set("phone")} />
+        </label>
+        <label htmlFor={`sfe-${id}`}>
+          Customer email
+          <input id={`sfe-${id}`} maxLength={80} autoComplete="off" value={f.email} onChange={set("email")} />
+        </label>
+      </div>
+      <label htmlFor={`sfl-${id}`}>
+        Logo
+        <input id={`sfl-${id}`} maxLength={300} autoComplete="off" placeholder="/brands/name.png or https://…" value={f.logo_url} onChange={set("logo_url")} />
+      </label>
+      <div className="three">
+        {color("color_header", "Header")}
+        {color("color_accent", "Stripe")}
+        {color("color_button", "Buttons")}
+      </div>
+      <div className="loc-ticks">
+        <label>
+          <input type="checkbox" checked={f.live} onChange={(e) => setF({ ...f, live: e.target.checked })} /> Open to shoppers at the web address
+        </label>
+      </div>
+      <div className="inline">
+        <button type="submit" className="btn sm" disabled={busy}>
+          {busy ? "Saving…" : sf ? "Save store" : "Set up store"}
+        </button>
+        {sf && (
+          <a className="btn ghost sm" href={`/?storefront=${sf.slug}`} target="_blank" rel="noopener">
+            Preview
+          </a>
+        )}
+        {onCancel && (
+          <button type="button" className="btn ghost sm" onClick={onCancel}>
             Cancel
           </button>
         )}

@@ -1,6 +1,7 @@
 // Shapes shared by the back-end API and the back-end screens.
 import type { Product, Settings } from "./catalog";
 import type { Allocation, Places } from "./places";
+import type { Storefront } from "./storefront";
 
 export type ShipFrom = {
   name: string;
@@ -89,6 +90,8 @@ export type Order = {
   charges: OrderCharge[];
   /** Which location each item was taken from when it was paid; empty before locations. */
   from: Allocation[];
+  /** The storefront the order came through; null for the Backroad Iron store. */
+  storefront_id?: string | null;
 };
 
 export type CoreReturn = {
@@ -154,6 +157,8 @@ export type AdminData = {
   held: Record<string, number>;
   /** Dealers, their store locations and each item's count at each. */
   places: Places;
+  /** Branded stores at dealers' own web addresses; empty before they're set up. */
+  storefronts: Storefront[];
 };
 
 /** One line of an item's stock history. */

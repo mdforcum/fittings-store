@@ -186,8 +186,16 @@ export type ShopCatalog = {
  * category tree, the numbers each item replaces, and which machines each
  * fits. The catalog tables are optional: without them the shop still sells.
  */
-export async function getShopCatalog(): Promise<ShopCatalog> {
+export async function getShopCatalog(dealerId: string | null = null): Promise<ShopCatalog> {
   const base = await getCatalog();
+  // A dealer's storefront sells only what is on that dealer's shelves.
+  if (dealerId && base.ok) {
+    const db0 = publicDb();
+    const ds = db0 ? await db0.rpc("fittings_dealer_stock", { p_dealer: dealerId }) : null;
+    const theirs = new Map<string, number>();
+    for (const r of (ds && !ds.error ? (ds.data as Array<{ product_id: string; qty: number }>) : []) ?? []) theirs.set(r.product_id, Number(r.qty) || 0);
+    base.products = base.products.filter((p) => theirs.has(p.id)).map((p) => ({ ...p, qty: Math.min(p.qty, theirs.get(p.id) ?? 0) }));
+  }
   const empty = { categories: [], xrefs: {}, fits: {}, charges: {}, kits: {}, spots: {} };
   const db = publicDb();
   if (!db || !base.ok) return { ...base, ...empty };

@@ -10,6 +10,7 @@ import { checkoutPlan } from "@/lib/checkout-rules";
 import { surchargeLines, type Surcharge } from "@/lib/foundation";
 import { availableQty, heldMap, holdMessage, holdWindow, isOrderId } from "@/lib/holds";
 import { getStripe } from "@/lib/payments";
+import { storeForRequest } from "@/lib/storefront-server";
 import { T, adminDb, env, getConfig, json } from "@/lib/server";
 
 export const dynamic = "force-dynamic";
@@ -38,6 +39,8 @@ export async function POST(req: Request) {
   if (wanted.size === 0) return json({ error: "empty", message: "Your cart is empty." }, 400);
 
   const db = adminDb();
+  // A dealer's storefront: the order is theirs and is filled from their shelves only.
+  const { storefront } = await storeForRequest(null);
   const release = (body as { release?: unknown })?.release;
   if (isOrderId(release)) await letGo(db, stripe, release);
 
@@ -106,6 +109,7 @@ export async function POST(req: Request) {
   const order = await db
     .from(T.orders)
     .insert({
+      ...(storefront ? { storefront_id: storefront.id, dealer_id: storefront.dealer_id } : {}),
       status: "pending",
       ship_method: pickup ? "pickup" : "parcel",
       subtotal_cents: subtotal,

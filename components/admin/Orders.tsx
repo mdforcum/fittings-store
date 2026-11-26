@@ -161,6 +161,11 @@ function OrderCard({ o, data, act, say }: { o: Order; data: AdminData; act: Act;
           </a>
         )}
       </div>
+      {o.storefront_id && (
+        <p className="ships-from">
+          Ordered through {(data.storefronts ?? []).find((f) => f.id === o.storefront_id)?.name ?? "a branded store"}&apos;s store
+        </p>
+      )}
       {(data.places?.locations.length ?? 0) > 1 && (o.from?.length ?? 0) > 0 && (
         <p className="ships-from">
           {o.ship_method === "pickup" ? "Picks up at" : "Ships from"}: {shipsFrom(o.from, data.places.locations)}

@@ -492,3 +492,9 @@ dialog.sheet { margin: 0 0 0 auto; width: min(440px, 100%); max-width: 100%; hei
 .loc-add-dealer { border-top: 1px solid var(--rule); margin-top: 14px; padding-top: 14px; display: grid; grid-template-columns: minmax(0, 360px) auto; gap: 12px; align-items: end; }
 .ships-from { font-size: .9rem; color: var(--muted); }
 .pick-from { font-weight: 600; margin: 6px 0 0; }
+.preview-bar { margin: 0; padding: 10px 16px; background: var(--hold-bg); color: var(--hold); font-weight: 600; text-align: center; }
+.brand-logo::before { display: none; }
+.brand-logo img { display: block; height: 48px; width: auto; max-width: min(260px, 60vw); }
+.sf-form { margin-top: 6px; }
+.sf-color { display: grid; grid-template-columns: 48px 1fr; gap: 8px; }
+.sf-color input[type="color"] { width: 48px; height: 48px; padding: 2px; border: 1px solid var(--rule); background: var(--surface); }

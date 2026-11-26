@@ -28,6 +28,7 @@ import { madeInUSA, type Category } from "@/lib/foundation";
 import MachinePicker from "./MachinePicker";
 import QuoteForm from "./QuoteForm";
 import { useCart, writeCart } from "@/lib/cart";
+import { lookStyle, type StoreLook } from "@/lib/storefront";
 import { HELD_KEY, cartSignature, countdown, heldFromReply, heldStillGood, readHeld, type HeldCheckout } from "@/lib/holds";
 import {
   TYPES,
@@ -53,6 +54,8 @@ type Props = {
   kits?: Record<string, Array<{ product_id: string; qty: number }>>;
   /** Where each placed item sits on our shelf. */
   spots?: Record<string, FindIt>;
+  /** Another business's storefront: its name, logo and colors. Null for the Backroad Iron store. */
+  look?: StoreLook | null;
 };
 
 const GARAGE_KEY = "my-machines";
@@ -70,7 +73,11 @@ function FitPill({ state, label }: { state: FitState; label: string }) {
   return <span className="pill bad">Not listed for your {label}</span>;
 }
 
-export default function Shop({ products: listed, settings, ok, openCart, categories = [], xrefs = {}, fits = {}, charges = {}, kits = {}, spots = {} }: Props) {
+export default function Shop({ products: listed, settings: base, ok, openCart, categories = [], xrefs = {}, fits = {}, charges = {}, kits = {}, spots = {}, look = null }: Props) {
+  // A storefront shows its own name and contact details.
+  const settings: Settings = look
+    ? { ...base, store_name: look.name, tagline: look.tagline || base.tagline, phone: look.phone, email: look.email }
+    : base;
   const router = useRouter();
   const cart = useCart();
   const [q, setQ] = useState("");
@@ -296,11 +303,21 @@ export default function Shop({ products: listed, settings, ok, openCart, categor
   );
 
   return (
-    <>
+    <div className={look ? "storefront" : undefined} style={look ? (lookStyle(look) as React.CSSProperties) : undefined}>
+      {look?.preview && (
+        <p className="preview-bar" role="status">
+          Preview of {look.name}&apos;s store. Shoppers can&apos;t see it yet, and checkout is off.
+        </p>
+      )}
       <header className="top">
         <div className="wrap">
-          <Link className="brand" href="/">
-            {settings.store_name}
+          <Link className={look?.logo_url ? "brand brand-logo" : "brand"} href={look ? `/${look.preview ? `?storefront=${look.slug}` : ""}` : "/"}>
+            {look?.logo_url ? (
+              // eslint-disable-next-line @next/next/no-img-element -- a dealer's own logo file, shown as is
+              <img src={look.logo_url} alt={settings.store_name} height={48} />
+            ) : (
+              settings.store_name
+            )}
           </Link>
           <nav aria-label="Store">
             <button type="button" className="mybtn" onClick={() => setPickerOpen(true)}>
@@ -313,7 +330,7 @@ export default function Shop({ products: listed, settings, ok, openCart, categor
                 "Pick your machine"
               )}
             </button>
-            <Link href="/hose">Hose builder</Link>
+            {!look && <Link href="/hose">Hose builder</Link>}
             <button type="button" className="cartbtn" onClick={() => setCartOpen(true)}>
               Cart <span className="count">{count}</span>
             </button>
@@ -513,6 +530,7 @@ export default function Shop({ products: listed, settings, ok, openCart, categor
             {settings.order_min_cents > 0 && ` Minimum order ${money(settings.order_min_cents)}.`}
           </p>
           {(settings.phone || settings.email) && <p>Questions on a fitting? {contact}</p>}
+          {look && <p className="hint">{look.name}&apos;s online parts store is run by Backroad Iron.</p>}
         </footer>
       </main>
 
@@ -629,7 +647,7 @@ export default function Shop({ products: listed, settings, ok, openCart, categor
                 <button
                   type="button"
                   className="btn"
-                  disabled={busy || liveLines.length === 0 || short > 0}
+                  disabled={busy || liveLines.length === 0 || short > 0 || !!look?.preview}
                   onClick={checkout}
                 >
                   {busy ? "Opening secure checkout…" : "Checkout"}
@@ -866,6 +884,6 @@ export default function Shop({ products: listed, settings, ok, openCart, categor
       />
 
       <Toast toast={toast} clear={clearToast} />
-    </>
+    </div>
   );
 }
