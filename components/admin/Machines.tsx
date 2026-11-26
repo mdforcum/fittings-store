@@ -3,10 +3,13 @@
 // row point at these. Add one at a time, or paste a whole lineup.
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { MACHINE_KINDS, machineLabel, type Machine, type MachineKind } from "@/lib/foundation";
+import { CONFIDENCES } from "@/lib/serials";
 import type { Say } from "../Admin";
 import { Modal } from "../ui";
 
-type Row = Machine & { parts: number };
+type Row = Machine & { parts: number; runs: number };
+type Run = { id: string; prefix: string; serial_from: string; serial_to: string; year: number | null; note: string; confidence: string; source: string };
+type Match = { machine_id: string; sentence: string; note: string; confirmed: boolean };
 type Form = {
   id?: string;
   make: string;
@@ -43,17 +46,25 @@ export default function Machines({ say }: { say: Say }) {
   const [busy, setBusy] = useState(false);
   const [paste, setPaste] = useState("");
   const [pasteNote, setPasteNote] = useState("");
+  const [starter, setStarter] = useState<{ name: string; machines: number } | null>(null);
+  const [confirmLoad, setConfirmLoad] = useState(false);
+  const [find, setFind] = useState("");
+  const [serial, setSerial] = useState("");
+  const [matches, setMatches] = useState<Match[] | null>(null);
+  const [serialNote, setSerialNote] = useState("");
+  const [runs, setRuns] = useState<Run[] | null>(null);
 
   const load = useCallback(async () => {
     try {
       const r = await fetch("/api/catalog?machines=1", { cache: "no-store" });
-      const body = (await r.json()) as { ok: boolean; message?: string; setup?: boolean; machines?: Row[] };
+      const body = (await r.json()) as { ok: boolean; message?: string; setup?: boolean; machines?: Row[]; starter?: { name: string; machines: number } };
       if (!body.ok) {
         setError(body.message ?? "Could not load.");
         setSetup(Boolean(body.setup));
       } else {
         setError("");
         setRows(body.machines ?? []);
+        setStarter(body.starter ?? null);
       }
     } catch {
       setError("No connection.");
@@ -66,11 +77,55 @@ export default function Machines({ say }: { say: Say }) {
   }, [load]);
 
   const makes = useMemo(() => [...new Set((rows ?? []).map((r) => r.make))], [rows]);
-  const shown = (rows ?? []).filter((r) => !make || r.make === make);
+  const needle = find.trim().toLowerCase();
+  const shown = (rows ?? []).filter((r) => (!make || r.make === make) && (!needle || machineLabel(r).toLowerCase().includes(needle)));
   const groups = MACHINE_KINDS.map((k) => ({ ...k, rows: shown.filter((r) => r.kind === k.id) })).filter((g) => g.rows.length);
+
+  async function loadStarter() {
+    setBusy(true);
+    const res = await post({ action: "lineup.import" });
+    setBusy(false);
+    setConfirmLoad(false);
+    if (!res.ok) {
+      say(res.message ?? "That did not load.", true);
+      return;
+    }
+    const problems = (res.problems as string[] | undefined) ?? [];
+    say(`${res.machines} machines and ${res.runs} serial runs loaded${problems.length ? `; ${problems.length} skipped` : ""}`);
+    await load();
+  }
+
+  async function checkSerial() {
+    setSerialNote("");
+    setMatches(null);
+    try {
+      const r = await fetch(`/api/machines?serial=${encodeURIComponent(serial.trim())}`, { cache: "no-store" });
+      const body = (await r.json()) as { ok: boolean; message?: string; matches?: Match[] };
+      if (!body.ok) setSerialNote(body.message ?? "That did not work.");
+      else {
+        setMatches(body.matches ?? []);
+        if (!body.matches?.length) setSerialNote("No machine on the list takes that serial. Check the plate, or add the run from the machine's edit screen once you know it.");
+      }
+    } catch {
+      setSerialNote("No connection.");
+    }
+  }
+
+  async function loadRuns(id: string) {
+    setRuns(null);
+    try {
+      const r = await fetch(`/api/catalog?runs=${encodeURIComponent(id)}`, { cache: "no-store" });
+      const body = (await r.json()) as { ok: boolean; runs?: Run[] };
+      setRuns(body.ok ? (body.runs ?? []) : []);
+    } catch {
+      setRuns([]);
+    }
+  }
 
   function edit(r?: Row) {
     setFormError("");
+    setRuns(null);
+    if (r) void loadRuns(r.id);
     setEditing(
       r
         ? {
@@ -161,10 +216,71 @@ export default function Machines({ say }: { say: Say }) {
         </p>
       </div>
 
+      {starter && (
+        <div className="mc-paste">
+          <h2>Starter lineup</h2>
+          <p className="hint">
+            {starter.machines} machines with their serial runs: Case IH row-crop tractors, Case 580 backhoes, Cat 311 to 336 excavators and
+            Cat D series dozers, each run with its source. Loading again brings them up to date and replaces only this lineup&rsquo;s runs.
+          </p>
+          {confirmLoad ? (
+            <div className="inline">
+              <button type="button" className="btn" disabled={busy} onClick={loadStarter}>
+                {busy ? "Loading…" : `Load ${starter.machines} machines`}
+              </button>
+              <button type="button" className="btn ghost" onClick={() => setConfirmLoad(false)}>
+                Cancel
+              </button>
+              <span className="hint">Machines already on the list keep their parts; their names, years and notes are updated.</span>
+            </div>
+          ) : (
+            <button type="button" className="btn ghost" onClick={() => setConfirmLoad(true)}>
+              {rows.length ? "Load or refresh the starter lineup" : "Load the starter lineup"}
+            </button>
+          )}
+        </div>
+      )}
+
+      <form
+        className="mc-paste"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (serial.trim()) void checkSerial();
+        }}
+      >
+        <h2>Check a serial</h2>
+        <p className="hint">Type the serial or the 17-character PIN from the plate. It tells which machine and year it is.</p>
+        <div className="inline">
+          <label className="sr" htmlFor="mc-serial">
+            Serial number
+          </label>
+          <input id="mc-serial" className="field" autoComplete="off" placeholder="e.g. 8970281" value={serial} onChange={(e) => setSerial(e.target.value)} />
+          <button type="submit" className="btn" disabled={!serial.trim()}>
+            Check
+          </button>
+        </div>
+        {serialNote && <p className="hint" role="status">{serialNote}</p>}
+        {matches && matches.length > 0 && (
+          <ul className="mc-matches" role="status">
+            {matches.map((m) => (
+              <li key={m.machine_id}>
+                <strong>{m.sentence}</strong>
+                {m.note && <small className="hint">{m.note}</small>}
+              </li>
+            ))}
+            {matches.length > 1 && <li className="hint">Several machines share this numbering: the model on the plate decides.</li>}
+          </ul>
+        )}
+      </form>
+
       <div className="inline">
         <button type="button" className="btn" onClick={() => edit()}>
           Add a machine
         </button>
+        <label className="sr" htmlFor="mc-find">
+          Find a machine
+        </label>
+        <input id="mc-find" className="field" placeholder="Find a model" value={find} onChange={(e) => setFind(e.target.value)} />
         {makes.length > 1 && (
           <select className="field" aria-label="Show make" value={make} onChange={(e) => setMake(e.target.value)}>
             <option value="">Every make</option>
@@ -189,6 +305,7 @@ export default function Machines({ say }: { say: Say }) {
                   <small className="hint">
                     {r.serial_prefixes.length ? `Prefixes ${r.serial_prefixes.join(", ")} · ` : ""}
                     {r.serial_breaks.length ? `${r.serial_breaks.length} serial break${r.serial_breaks.length === 1 ? "" : "s"} · ` : ""}
+                    {r.runs ? `${r.runs} serial run${r.runs === 1 ? "" : "s"} · ` : ""}
                     {r.parts} part{r.parts === 1 ? "" : "s"} listed
                   </small>
                 </span>
@@ -318,6 +435,46 @@ export default function Machines({ say }: { say: Say }) {
                 Add a serial break
               </button>
             </section>
+            {editing.id && (
+              <section>
+                <h3>Serial runs</h3>
+                {runs === null ? (
+                  <p className="hint">Loading…</p>
+                ) : runs.length === 0 ? (
+                  <p className="hint">None yet.</p>
+                ) : (
+                  <ul className="mc-runs">
+                    {runs.slice(0, 60).map((r) => (
+                      <li key={r.id}>
+                        <span>
+                          {r.serial_from && r.serial_to
+                            ? `${r.serial_from} to ${r.serial_to}`
+                            : r.serial_from
+                              ? `${r.serial_from} and up`
+                              : r.serial_to
+                                ? `Up to ${r.serial_to}`
+                                : `Every ${r.prefix} serial`}
+                          {r.year ? ` · ${r.year}` : ""}
+                        </span>
+                        <small className="hint">
+                          {CONFIDENCES.find((c) => c.id === r.confidence)?.label ?? r.confidence}
+                          {r.source && (
+                            <>
+                              {" · "}
+                              <a href={r.source} target="_blank" rel="noreferrer">
+                                source
+                              </a>
+                            </>
+                          )}
+                          {r.note ? ` · ${r.note}` : ""}
+                        </small>
+                      </li>
+                    ))}
+                    {runs.length > 60 && <li className="hint">and {runs.length - 60} more</li>}
+                  </ul>
+                )}
+              </section>
+            )}
             <label htmlFor="m-notes">
               Notes
               <textarea id="m-notes" rows={2} maxLength={400} value={editing.notes} onChange={(e) => setEditing({ ...editing, notes: e.target.value })} />

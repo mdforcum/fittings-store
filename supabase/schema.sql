@@ -834,3 +834,31 @@ grant all on public.fittings_diagrams, public.fittings_diagram_parts, public.fit
 create extension if not exists pg_trgm with schema extensions;
 create index if not exists fittings_xrefs_number_trgm on public.fittings_xrefs using gin (number_norm extensions.gin_trgm_ops);
 create index if not exists fittings_products_name_trgm on public.fittings_products using gin (lower(name) extensions.gin_trgm_ops);
+
+-- ---------------------------------------------------------------------------
+-- Machine serial runs (2026-11-25): which machine, and which year or series of
+-- it, a serial number belongs to. Loaded from the starter lineup sheet and
+-- added to by the parts counter. Private: the store answers lookups, and does
+-- not publish the table.
+-- ---------------------------------------------------------------------------
+
+create table if not exists public.fittings_machine_serials (
+  id uuid primary key default gen_random_uuid(),
+  machine_id uuid not null references public.fittings_machines(id) on delete cascade,
+  prefix text not null default '' check (prefix ~ '^[A-Z0-9]{0,6}$'),
+  serial_from text not null default '',
+  serial_to text not null default '',
+  year integer check (year is null or year between 1900 and 2100),
+  note text not null default '',
+  confidence text not null check (confidence in ('oem','reference','seller','single','observed')),
+  source text not null default '',
+  -- Which load wrote the row ("Starter lineup 2026-11-25"), so a load can be run again.
+  batch text not null default '',
+  check (serial_from <> '' or serial_to <> '' or prefix <> '')
+);
+create index if not exists fittings_machine_serials_machine_idx on public.fittings_machine_serials(machine_id);
+create index if not exists fittings_machine_serials_prefix_idx on public.fittings_machine_serials(prefix);
+
+alter table public.fittings_machine_serials enable row level security;
+revoke all on public.fittings_machine_serials from anon, authenticated;
+grant all on public.fittings_machine_serials to service_role;

@@ -1,5 +1,6 @@
 // Server side of the catalog foundation: reading and saving an item's details.
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { CONFIDENCES, identifySerial, type Confidence, type SerialRun } from "./serials";
 import {
   CONDITIONS,
   DOC_KINDS,
@@ -17,6 +18,7 @@ import {
   cleanSpecs,
   kitLoops,
   numberNorm,
+  serialKey,
   specFieldsFor,
   type CatalogMeta,
   type Category,
@@ -39,6 +41,7 @@ export const FT = {
   documents: "fittings_documents",
   diagrams: "fittings_diagrams",
   quotes: "fittings_quote_requests",
+  serials: "fittings_machine_serials",
 } as const;
 
 /** The database has not had the foundation section of supabase/schema.sql applied yet. */
@@ -84,9 +87,10 @@ export function normalizeMachine(r: Record<string, unknown>): Machine {
 }
 
 export async function loadMachines(db: SupabaseClient): Promise<Machine[]> {
-  const m = await db.from(FT.machines).select("*").order("make").order("sort").order("series").order("model");
-  check(m.error);
-  return (m.data ?? []).map(normalizeMachine);
+  const rows = await allRows<Record<string, unknown>>((a, b) =>
+    db.from(FT.machines).select("*").order("make").order("sort").order("series").order("model").order("id").range(a, b),
+  );
+  return rows.map(normalizeMachine);
 }
 
 export async function loadMeta(db: SupabaseClient): Promise<CatalogMeta> {
@@ -406,12 +410,19 @@ export async function placeByType(db: SupabaseClient, id: string, type: string):
 export { MachineProblem };
 
 /** Machines with how many items list each one, for the admin list. */
-export async function machinesWithUse(db: SupabaseClient): Promise<Array<Machine & { parts: number }>> {
-  const [machines, f] = await Promise.all([loadMachines(db), db.from(FT.fitment).select("machine_id")]);
-  check(f.error);
+export async function machinesWithUse(db: SupabaseClient): Promise<Array<Machine & { parts: number; runs: number }>> {
+  const [machines, fit, runs] = await Promise.all([
+    loadMachines(db),
+    allRows<{ machine_id: string }>((a, b) => db.from(FT.fitment).select("machine_id").range(a, b)),
+    serialCounts(db).catch((e) => {
+      // The serial table comes in its own setup step; the list still works without it.
+      if (e instanceof SchemaMissing) return new Map<string, number>();
+      throw e;
+    }),
+  ]);
   const used = new Map<string, number>();
-  for (const r of f.data ?? []) used.set(r.machine_id as string, (used.get(r.machine_id as string) ?? 0) + 1);
-  return machines.map((m) => ({ ...m, parts: used.get(m.id) ?? 0 }));
+  for (const r of fit) used.set(r.machine_id, (used.get(r.machine_id) ?? 0) + 1);
+  return machines.map((m) => ({ ...m, parts: used.get(m.id) ?? 0, runs: runs.get(m.id) ?? 0 }));
 }
 
 const machineRow = (m: ReturnType<typeof cleanMachine>) => ({
@@ -474,4 +485,179 @@ export async function deleteMachine(db: SupabaseClient, id: string): Promise<voi
   }
   const { error } = await db.from(FT.machines).delete().eq("id", id);
   check(error);
+}
+
+// ---------------------------------------------------------------------------
+// Serial runs: load a lineup, list a machine's runs, and answer a lookup.
+// ---------------------------------------------------------------------------
+
+export type LineupRun = { prefix: string; from: string; to: string; year: number | null; note: string; confidence: string; source: string };
+export type LineupMachine = {
+  make: string;
+  kind: string;
+  series: string;
+  model: string;
+  year_from: number | null;
+  year_to: number | null;
+  notes: string;
+  serial_prefixes: string[];
+  runs: LineupRun[];
+};
+export type Lineup = { name: string; machines: LineupMachine[] };
+
+export type StoredRun = SerialRun & { id: string; source: string; batch: string };
+
+const confidenceOf = (v: unknown): Confidence => (CONFIDENCES.find((c) => c.id === v)?.id ?? "single") as Confidence;
+
+/** Reads past the API's 1,000-row page. */
+async function allRows<T>(page: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: PgError }>): Promise<T[]> {
+  const out: T[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await page(from, from + 999);
+    check(error);
+    out.push(...(data ?? []));
+    if (!data || data.length < 1000) return out;
+  }
+}
+
+/** Serial-run counts by machine, for the admin list. */
+export async function serialCounts(db: SupabaseClient): Promise<Map<string, number>> {
+  const rows = await allRows<{ machine_id: string }>((a, b) => db.from(FT.serials).select("machine_id").range(a, b));
+  const out = new Map<string, number>();
+  for (const r of rows) out.set(r.machine_id, (out.get(r.machine_id) ?? 0) + 1);
+  return out;
+}
+
+export async function machineRuns(db: SupabaseClient, machineId: string): Promise<StoredRun[]> {
+  const { data, error } = await db
+    .from(FT.serials)
+    .select("id, machine_id, prefix, serial_from, serial_to, year, note, confidence, source, batch")
+    .eq("machine_id", machineId)
+    .order("prefix")
+    .order("year", { nullsFirst: true })
+    .order("serial_from");
+  check(error);
+  return (data ?? []).map((r) => ({ ...(r as StoredRun), confidence: confidenceOf(r.confidence) }));
+}
+
+/**
+ * Loads a lineup: machines are added, or brought up to date by make and model,
+ * and this lineup's own serial runs are replaced. Runs from other loads and
+ * from the counter are left alone.
+ */
+export async function importLineup(db: SupabaseClient, lineup: Lineup): Promise<{ machines: number; runs: number; problems: string[] }> {
+  const problems: string[] = [];
+  const clean = lineup.machines.flatMap((m) => {
+    try {
+      return [{ machine: cleanMachine({ ...m }), runs: m.runs }];
+    } catch (e) {
+      problems.push(`${m.make} ${m.model}: ${(e as Error).message}`);
+      return [];
+    }
+  });
+  const ids = new Map<string, string>();
+  for (let i = 0; i < clean.length; i += 200) {
+    const chunk = clean.slice(i, i + 200);
+    const { data, error } = await db
+      .from(FT.machines)
+      .upsert(
+        chunk.map(({ machine: m }) => ({
+          make: m.make,
+          kind: m.kind,
+          series: m.series,
+          model: m.model,
+          year_from: m.year_from,
+          year_to: m.year_to,
+          serial_prefixes: m.serial_prefixes,
+          notes: m.notes,
+        })),
+        { onConflict: "make,model" },
+      )
+      .select("id, make, model");
+    check(error);
+    for (const r of data ?? []) ids.set(`${r.make}|${r.model}`, r.id as string);
+  }
+  const machineIds = [...ids.values()];
+  for (let i = 0; i < machineIds.length; i += 200) {
+    const { error } = await db.from(FT.serials).delete().eq("batch", lineup.name).in("machine_id", machineIds.slice(i, i + 200));
+    check(error);
+  }
+  const rows = clean.flatMap(({ machine: m, runs }) => {
+    const machine_id = ids.get(`${m.make}|${m.model}`);
+    if (!machine_id) return [];
+    return runs.flatMap((r) => {
+      const prefix = numberNorm(r.prefix ?? "").slice(0, 6);
+      const serial_from = String(r.from ?? "").trim().slice(0, 40);
+      const serial_to = String(r.to ?? "").trim().slice(0, 40);
+      if (!prefix && !serial_from && !serial_to) return [];
+      return [
+        {
+          machine_id,
+          prefix,
+          serial_from,
+          serial_to,
+          year: Number.isInteger(r.year) ? r.year : null,
+          note: String(r.note ?? "").slice(0, 300),
+          confidence: confidenceOf(r.confidence),
+          source: /^https?:\/\//.test(r.source ?? "") ? r.source : "",
+          batch: lineup.name,
+        },
+      ];
+    });
+  });
+  for (let i = 0; i < rows.length; i += 500) {
+    const { error } = await db.from(FT.serials).insert(rows.slice(i, i + 500));
+    check(error);
+  }
+  return { machines: ids.size, runs: rows.length, problems };
+}
+
+export type SerialAnswer = {
+  machine_id: string;
+  make: string;
+  model: string;
+  kind: string;
+  series: string;
+  year: number | null;
+  note: string;
+  confidence: Confidence;
+};
+
+/**
+ * Which machines a serial belongs to. Only the runs that could match are read:
+ * those under the serial's own lead (JJG, N5C), its first three characters
+ * (a Cat prefix), or with no prefix at all.
+ */
+export async function lookupSerial(db: SupabaseClient, serial: string, machineId?: string): Promise<SerialAnswer[]> {
+  const key = serialKey(serial);
+  if (key.length < 3 || key.length > 17) return [];
+  const lead = /^(.*[A-Z])\d+$/.exec(key)?.[1] ?? "";
+  const prefixes = [...new Set(["", lead, key.slice(0, 3)])];
+  const runs = await allRows<Record<string, unknown>>((a, b) => {
+    let q = db.from(FT.serials).select("machine_id, prefix, serial_from, serial_to, year, note, confidence").in("prefix", prefixes);
+    if (machineId) q = q.eq("machine_id", machineId);
+    return q.range(a, b);
+  });
+  const matches = identifySerial(
+    key,
+    runs.map((r) => ({
+      machine_id: String(r.machine_id),
+      prefix: String(r.prefix ?? ""),
+      serial_from: String(r.serial_from ?? ""),
+      serial_to: String(r.serial_to ?? ""),
+      year: typeof r.year === "number" ? r.year : null,
+      note: String(r.note ?? ""),
+      confidence: confidenceOf(r.confidence),
+    })),
+  ).slice(0, 12);
+  if (!matches.length) return [];
+  const { data, error } = await db.from(FT.machines).select("id, make, model, kind, series").in("id", matches.map((m) => m.machine_id));
+  check(error);
+  const byId = new Map((data ?? []).map((m) => [m.id as string, m]));
+  return matches.flatMap((m) => {
+    const machine = byId.get(m.machine_id);
+    return machine
+      ? [{ ...m, make: String(machine.make), model: String(machine.model), kind: String(machine.kind), series: String(machine.series ?? "") }]
+      : [];
+  });
 }

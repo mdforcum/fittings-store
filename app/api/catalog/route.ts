@@ -5,6 +5,8 @@
 // POST { action: "machine.save", machine } adds or changes one machine.
 // POST { action: "machines.add", text } adds a pasted lineup, one machine per line.
 // POST { action: "machine.delete", id } removes a machine no item lists.
+// GET ?runs=<machine id> lists that machine's serial runs, with their sources.
+// POST { action: "lineup.import" } loads the bundled starter lineup: machines and serial runs.
 import { isAdmin, sameOrigin } from "@/lib/auth";
 import { parseMachineLines } from "@/lib/foundation";
 import {
@@ -13,6 +15,9 @@ import {
   SchemaMissing,
   addMachines,
   deleteMachine,
+  importLineup,
+  machineRuns,
+  type Lineup,
   loadDetails,
   loadMeta,
   machinesWithUse,
@@ -20,6 +25,7 @@ import {
   saveMachine,
 } from "@/lib/foundation-server";
 import { adminDb, json } from "@/lib/server";
+import starter from "@/data/machine-lineup.json";
 
 export const dynamic = "force-dynamic";
 
@@ -35,7 +41,9 @@ export async function GET(req: Request) {
   const params = new URL(req.url).searchParams;
   try {
     const db = adminDb();
-    if (params.get("machines")) return json({ ok: true, machines: await machinesWithUse(db) });
+    if (params.get("machines")) return json({ ok: true, machines: await machinesWithUse(db), starter: { name: starter.name, machines: starter.machines.length } });
+    const runsOf = (params.get("runs") ?? "").slice(0, 40);
+    if (runsOf) return json({ ok: true, runs: await machineRuns(db, runsOf) });
     const id = (params.get("id") ?? "").slice(0, 80);
     const [meta, details] = await Promise.all([loadMeta(db), id ? loadDetails(db, id) : Promise.resolve(null)]);
     if (id && !details) return json({ ok: false, message: "That item no longer exists." }, 404);
@@ -73,6 +81,10 @@ export async function POST(req: Request) {
         if (problems.length) return json({ ok: false, message: problems.slice(0, 5).join(" ") }, 400);
         if (!machines.length) return json({ ok: false, message: "Paste at least one machine, one per line." }, 400);
         return json({ ok: true, ...(await addMachines(db, machines)) });
+      }
+      case "lineup.import": {
+        const result = await importLineup(db, starter as Lineup);
+        return json({ ok: true, ...result });
       }
       case "machine.delete": {
         const id = typeof body.id === "string" ? body.id.slice(0, 40) : "";

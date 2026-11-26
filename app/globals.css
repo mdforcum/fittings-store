@@ -383,3 +383,6 @@ dialog.sheet { margin: 0 0 0 auto; width: min(440px, 100%); max-width: 100%; hei
 .mc-paste { display: grid; gap: 8px; padding: 14px; border: 1px solid var(--rule); border-radius: 3px; background: var(--sunken); }
 .mc-paste pre { white-space: pre-wrap; font-size: .85rem; }
 .mc-paste textarea { width: 100%; font-family: inherit; }
+.mc-matches, .mc-runs { list-style: none; display: grid; gap: 6px; }
+.mc-matches li, .mc-runs li { display: grid; gap: 2px; padding: 8px 10px; border: 1px solid var(--rule); border-radius: 3px; background: var(--surface); }
+.mc-runs { max-height: 320px; overflow: auto; }
