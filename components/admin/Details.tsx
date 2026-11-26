@@ -82,6 +82,7 @@ function fromDraft(f: Draft): Record<string, unknown> {
   return {
     category_id: f.category_id ?? "",
     brand: f.brand,
+    origin: f.origin,
     family: f.family,
     variant_label: f.variant_label,
     specs: f.specs,
@@ -278,6 +279,17 @@ export default function DetailsEditor({
               <label htmlFor="d-brand">
                 Brand
                 <input id="d-brand" maxLength={60} autoComplete="off" placeholder="Baldwin" value={f.brand} onChange={(e) => set("brand", e.target.value)} />
+              </label>
+              <label htmlFor="d-origin">
+                Made in (as the supplier states it)
+                <input id="d-origin" maxLength={40} autoComplete="off" list="d-origins" placeholder="USA" value={f.origin} onChange={(e) => set("origin", e.target.value)} />
+                <datalist id="d-origins">
+                  <option value="USA" />
+                  <option value="Canada" />
+                  <option value="Mexico" />
+                  <option value="China" />
+                  <option value="India" />
+                </datalist>
               </label>
             </div>
             <div className="two">

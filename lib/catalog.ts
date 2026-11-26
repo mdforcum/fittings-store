@@ -16,6 +16,8 @@ export type Product = {
   // Catalog foundation fields. Absent on old rows: the defaults below apply.
   category_id: string | null;
   brand: string;
+  /** Country of origin; "USA" shows the Made in USA badge. */
+  origin: string;
   condition: string;
   universal: boolean;
   price_mode: "cart" | "quote";
@@ -155,6 +157,7 @@ export function normalizeProduct(row: Record<string, unknown>): Product {
     sort: n(row.sort) ?? 0,
     category_id: typeof row.category_id === "string" && row.category_id ? row.category_id : null,
     brand: s(row.brand),
+    origin: s(row.origin),
     condition: s(row.condition) || "new",
     universal: row.universal === true,
     price_mode: row.price_mode === "quote" ? "quote" : "cart",

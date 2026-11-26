@@ -476,6 +476,7 @@ begin
   update fittings_products set
     category_id   = case when d ? 'category_id' then nullif(d->>'category_id', '') else category_id end,
     brand         = coalesce(d->>'brand', brand),
+    origin        = coalesce(d->>'origin', origin),
     family        = coalesce(d->>'family', family),
     variant_label = coalesce(d->>'variant_label', variant_label),
     specs         = coalesce(d->'specs', specs),
@@ -936,3 +937,12 @@ alter table public.fittings_quote_requests add constraint fittings_quote_request
 alter table public.fittings_quote_requests
   add column if not exists answer text not null default '',
   add column if not exists updated_at timestamptz not null default now();
+
+-- ---------------------------------------------------------------------------
+-- Country of origin (2026-11-25). Seal kits start with made-in-USA aftermarket
+-- lines; the shop shows a Made in USA badge and filter from this. Only mark an
+-- item USA when the supplier states it for that item: the FTC's rule for an
+-- unqualified "Made in USA" is all or virtually all of it made here.
+-- ---------------------------------------------------------------------------
+alter table public.fittings_products
+  add column if not exists origin text not null default '' check (length(origin) <= 40);

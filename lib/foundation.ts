@@ -154,6 +154,8 @@ export type CatalogMeta = {
 export type Details = {
   category_id: string | null;
   brand: string;
+  /** Country of origin as the supplier states it: "USA", "Canada"... */
+  origin: string;
   family: string;
   variant_label: string;
   specs: Record<string, SpecValue>;
@@ -179,6 +181,7 @@ export type Details = {
 export const EMPTY_DETAILS: Details = {
   category_id: null,
   brand: "",
+  origin: "",
   family: "",
   variant_label: "",
   specs: {},
@@ -712,4 +715,9 @@ export function serialInRange(serial: string, from: string, to: string): boolean
   if (from && cmp(s, numberNorm(from)) < 0) return false;
   if (to && cmp(s, numberNorm(to)) > 0) return false;
   return true;
+}
+
+/** Whether an item's stated country of origin is the United States. */
+export function madeInUSA(origin: string | null | undefined): boolean {
+  return /^(usa|u\.?s\.?a?\.?|united states( of america)?|america)$/i.test((origin ?? "").trim());
 }

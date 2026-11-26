@@ -425,3 +425,5 @@ dialog.sheet { margin: 0 0 0 auto; width: min(440px, 100%); max-width: 100%; hei
 .kit-list ul { margin: 6px 0 0; padding: 0; list-style: none; display: grid; gap: 4px; }
 .kit-list li { display: flex; justify-content: space-between; gap: 10px; font-size: .92rem; }
 .kit-list h3 { margin: 0; }
+.pill.usa { background: #e7f1fb; color: #1d3f66; }
+@media (prefers-color-scheme: dark) { .pill.usa { background: #1d3147; color: #cfe2f7; } }

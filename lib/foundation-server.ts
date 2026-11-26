@@ -2,6 +2,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { CONFIDENCES, identifySerial, type Confidence, type SerialRun } from "./serials";
 import {
+  madeInUSA,
   CONDITIONS,
   DOC_KINDS,
   MACHINE_KINDS,
@@ -147,7 +148,7 @@ export async function loadDetails(db: SupabaseClient, id: string): Promise<Detai
     db
       .from("fittings_products")
       .select(
-        "category_id, brand, family, variant_label, specs, kind, ship_class, weight_oz, length_in, width_in, height_in, freight_class, condition, universal, warranty_months, price_mode",
+        "category_id, brand, origin, family, variant_label, specs, kind, ship_class, weight_oz, length_in, width_in, height_in, freight_class, condition, universal, warranty_months, price_mode",
       )
       .eq("id", id)
       .maybeSingle(),
@@ -168,6 +169,7 @@ export async function loadDetails(db: SupabaseClient, id: string): Promise<Detai
     ...EMPTY_DETAILS,
     category_id: (row.category_id as string | null) ?? null,
     brand: (row.brand as string) ?? "",
+    origin: (row.origin as string) ?? "",
     family: (row.family as string) ?? "",
     variant_label: (row.variant_label as string) ?? "",
     specs: (row.specs && typeof row.specs === "object" ? row.specs : {}) as Record<string, SpecValue>,
@@ -337,6 +339,7 @@ export function prepareDetails(
     fitment,
     category_id: category_id ?? "",
     brand: text(raw.brand, 60),
+    origin: madeInUSA(text(raw.origin, 40)) ? "USA" : text(raw.origin, 40),
     family: text(raw.family, 80),
     variant_label: text(raw.variant_label, 60),
     specs,

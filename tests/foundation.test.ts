@@ -28,6 +28,7 @@ import {
   type KitItem,
   type Location,
   type SpecField,
+  madeInUSA,
 } from "../lib/foundation.ts";
 
 const field = (key: string, over: Partial<SpecField> = {}): SpecField => ({
@@ -374,4 +375,9 @@ test("a pasted lineup: kinds by name, blank and # lines skipped, problems by lin
   assert.equal(problems.length, 2);
   assert.match(problems[0], /^Line 6: /);
   assert.match(problems[1], /^Line 7: Pick what kind/);
+});
+
+test("made in USA reads the usual ways of writing it, and nothing else", () => {
+  for (const s of ["USA", "usa", "U.S.A.", "US", "United States", "United States of America"]) assert.equal(madeInUSA(s), true, s);
+  for (const s of ["", "Canada", "USA parts, assembled in Mexico", "Mexico", null]) assert.equal(madeInUSA(s), false, String(s));
 });

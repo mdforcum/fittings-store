@@ -23,7 +23,7 @@ import {
 } from "@/lib/browse";
 import { cartTotals, freeShipNudge, shipDay } from "@/lib/checkout-rules";
 import { packageValue } from "@/lib/seal-kits";
-import type { Category } from "@/lib/foundation";
+import { madeInUSA, type Category } from "@/lib/foundation";
 import MachinePicker from "./MachinePicker";
 import QuoteForm from "./QuoteForm";
 import { useCart, writeCart } from "@/lib/cart";
@@ -80,6 +80,7 @@ export default function Shop({ products, settings, ok, openCart, categories = []
   const gallery = useRef<HTMLDivElement>(null);
   const [shelf, setShelf] = useState("all");
   const [condition, setCondition] = useState("all");
+  const [usaOnly, setUsaOnly] = useState(false);
   const [fitsOnly, setFitsOnly] = useState(false);
   const [garage, setGarage] = useState<Garage>(EMPTY_GARAGE);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -207,6 +208,7 @@ export default function Shop({ products, settings, ok, openCart, categories = []
     if (nav.length ? shelfIds && !shelfIds.has(p.category_id ?? "") : filter !== "all" && p.type !== filter) return false;
     if (condition !== "all" && p.condition !== condition) return false;
     if (instock && !sellable(p)) return false;
+    if (usaOnly && !madeInUSA(p.origin)) return false;
     if (fitsOnly && mine && !["fits", "universal", "checkSerial"].includes(fitOf(p).kind)) return false;
     return true;
   });
@@ -339,6 +341,11 @@ export default function Shop({ products, settings, ok, openCart, categories = []
               />{" "}
               In stock only
             </label>
+            {products.some((p) => madeInUSA(p.origin)) && (
+              <label className="check" htmlFor="usaOnly">
+                <input type="checkbox" id="usaOnly" checked={usaOnly} onChange={(e) => setUsaOnly(e.target.checked)} /> Made in USA only
+              </label>
+            )}
             {mine && anyFitment && (
               <label className="check" htmlFor="fitsOnly">
                 <input type="checkbox" id="fitsOnly" checked={fitsOnly} onChange={(e) => setFitsOnly(e.target.checked)} /> Only parts
@@ -394,8 +401,9 @@ export default function Shop({ products, settings, ok, openCart, categories = []
                           </p>
                         )}
                         {why && <p className="because">{why}</p>}
-                        {(p.condition !== "new" || mine) && (
+                        {(p.condition !== "new" || mine || madeInUSA(p.origin)) && (
                           <p className="tags">
+                            {madeInUSA(p.origin) && <span className="pill usa">Made in USA</span>}
                             {p.condition !== "new" && <span className="pill muted">{conditionLabel(p.condition)}</span>}
                             {mine && <FitPill state={fit} label={mine.label} />}
                           </p>
@@ -654,6 +662,12 @@ export default function Shop({ products, settings, ok, openCart, categories = []
                 <>
                   <dt>Brand</dt>
                   <dd>{detail.brand}</dd>
+                </>
+              )}
+              {detail.origin && (
+                <>
+                  <dt>Made in</dt>
+                  <dd>{madeInUSA(detail.origin) ? "USA" : detail.origin}</dd>
                 </>
               )}
               <dt>Condition</dt>
