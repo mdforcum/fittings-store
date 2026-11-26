@@ -11,6 +11,7 @@ import {
 import type { ShopCharge, ShopFit, ShopXref } from "./browse";
 import type { Category } from "./foundation";
 import { findIt, type FindIt, type Spot } from "./shelf";
+import { availableQty, heldMap } from "./holds";
 
 // Pasted values often pick up stray spaces, line breaks or wrapping quotes.
 const clean = (v: string | undefined) =>
@@ -127,13 +128,21 @@ export function adminDb(): SupabaseClient {
 export async function getCatalog(): Promise<{ products: Product[]; settings: Settings; ok: boolean }> {
   const db = publicDb();
   if (!db) return { products: [], settings: DEFAULT_SETTINGS, ok: false };
-  const [p, s] = await Promise.all([
+  const [p, s, h] = await Promise.all([
     db.from(T.products).select("*"),
     db.from(T.settings).select("*").eq("id", 1).maybeSingle(),
+    // Parts in someone's checkout right now. Before the holds are set up this
+    // call fails and nothing is subtracted.
+    db.rpc("fittings_held"),
   ]);
   if (p.error) return { products: [], settings: normalizeSettings(s.data), ok: false };
+  const held = heldMap(h.error ? [] : (h.data as Array<{ product_id: unknown; held: unknown }>));
   return {
-    products: (p.data ?? []).map(normalizeProduct).sort(bySort),
+    // Shoppers see what they can buy: the shelf count less what is held.
+    products: (p.data ?? [])
+      .map(normalizeProduct)
+      .map((x) => (held[x.id] ? { ...x, qty: availableQty(x.qty, held[x.id]) } : x))
+      .sort(bySort),
     settings: normalizeSettings(s.data),
     ok: true,
   };

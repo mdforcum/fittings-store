@@ -1,6 +1,6 @@
 "use client";
-import { useState } from "react";
-import type { AdminData, Cost } from "@/lib/admin-types";
+import { useEffect, useState } from "react";
+import type { AdminData, Cost, StockMove } from "@/lib/admin-types";
 import {
   TYPES,
   adminStatus,
@@ -27,6 +27,7 @@ export default function Inventory({ data, act, say, reload }: Props) {
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
   const [editing, setEditing] = useState<string | null>(null); // product id, "new", or null
+  const [stockOf, setStockOf] = useState<string | null>(null); // product id whose stock history is open
   const [bulk, setBulk] = useState("");
 
   const counts: Record<Filter, number> = { all: data.products.length, live: 0, out: 0, noprice: 0 };
@@ -134,7 +135,16 @@ export default function Inventory({ data, act, say, reload }: Props) {
       </div>
       <ul className="rows">
         {shown.map((p) => (
-          <Row key={p.id} p={p} cost={data.costs[p.id]} act={act} say={say} onEdit={() => setEditing(p.id)} />
+          <Row
+            key={p.id}
+            p={p}
+            cost={data.costs[p.id]}
+            held={data.held?.[p.id] ?? 0}
+            act={act}
+            say={say}
+            onEdit={() => setEditing(p.id)}
+            onStock={() => setStockOf(p.id)}
+          />
         ))}
       </ul>
       {shown.length === 0 && (
@@ -143,6 +153,16 @@ export default function Inventory({ data, act, say, reload }: Props) {
         </p>
       )}
 
+      {stockOf && data.products.some((p) => p.id === stockOf) && (
+        <StockHistory
+          key={stockOf}
+          product={data.products.find((p) => p.id === stockOf)!}
+          held={data.held?.[stockOf] ?? 0}
+          act={act}
+          say={say}
+          onClose={() => setStockOf(null)}
+        />
+      )}
       {editing && (
         <ItemEditor
           key={editing}
@@ -161,15 +181,19 @@ export default function Inventory({ data, act, say, reload }: Props) {
 function Row({
   p,
   cost,
+  held,
   act,
   say,
   onEdit,
+  onStock,
 }: {
   p: Product;
   cost: Cost | undefined;
+  held: number;
   act: Act;
   say: Say;
   onEdit: () => void;
+  onStock: () => void;
 }) {
   const c = cost?.cost_cents ?? null;
   const price = p.price_cents;
@@ -182,7 +206,7 @@ function Row({
       e.target.value = String(p.qty);
       return say("Quantity must be a whole number, 0 or more.", true);
     }
-    if (n !== p.qty) act("product.update", { id: p.id, fields: { qty: n } });
+    if (n !== p.qty) act("qty.count", { id: p.id, qty: n });
   }
 
   async function saveCost(e: React.FocusEvent<HTMLInputElement>) {
@@ -237,9 +261,14 @@ function Row({
           <span>{p.part_number ? `Part # ${p.part_number}` : "No part #"}</span>
           <span>{specLine(p)}</span>
         </div>
-        <button type="button" className="btn ghost sm" onClick={onEdit}>
-          Edit
-        </button>
+        <div className="inline">
+          <button type="button" className="btn ghost sm" onClick={onStock}>
+            Stock
+          </button>
+          <button type="button" className="btn ghost sm" onClick={onEdit}>
+            Edit
+          </button>
+        </div>
       </div>
       <div className="r-qty">
         <span className="lbl">On hand</span>
@@ -266,6 +295,11 @@ function Row({
             +
           </button>
         </div>
+        {held > 0 && (
+          <span className="held-note">
+            {held} in checkout · {Math.max(0, p.qty - held)} free to sell
+          </span>
+        )}
       </div>
       <label htmlFor={`cost-${p.id}`}>
         <span className="lbl">Cost $</span>
@@ -569,6 +603,127 @@ function ItemEditor({
         )}
       </div>
       {details && product && <DetailsEditor product={product} say={say} onClose={() => setDetails(false)} />}
+    </Modal>
+  );
+}
+
+const MOVE_LABEL: Record<StockMove["kind"], string> = {
+  start: "Starting count",
+  receive: "Received",
+  count: "Recount",
+  adjust: "Adjusted",
+  edit: "Changed",
+  sale: "Sold",
+  return: "Returned",
+};
+
+/** An item's stock: what moved it and when, and a way to log a shipment that came in. */
+function StockHistory({
+  product,
+  held,
+  act,
+  say,
+  onClose,
+}: {
+  product: Product;
+  held: number;
+  act: Act;
+  say: Say;
+  onClose: () => void;
+}) {
+  const [moves, setMoves] = useState<StockMove[] | null>(null);
+  const [numbers, setNumbers] = useState<Record<string, number>>({});
+  const [qty, setQty] = useState("");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const [version, setVersion] = useState(0);
+  const load = () => setVersion((v) => v + 1);
+  useEffect(() => {
+    let live = true;
+    act("stock.history", { id: product.id }).then((r) => {
+      if (!live) return;
+      setMoves(((r?.moves as StockMove[]) ?? []));
+      setNumbers((r?.numbers as Record<string, number>) ?? {});
+    });
+    return () => {
+      live = false;
+    };
+  }, [act, product.id, version]);
+
+  async function receive(e: React.FormEvent) {
+    e.preventDefault();
+    const n = Number(qty.trim());
+    if (!Number.isInteger(n) || n < 1) return say("Enter how many came in, 1 or more.", true);
+    setBusy(true);
+    const done = await act("qty.adjust", { id: product.id, delta: n, kind: "receive", note });
+    setBusy(false);
+    if (done) {
+      say(`Added ${n} to ${product.name}`);
+      setQty("");
+      setNote("");
+      load();
+    }
+  }
+
+  const when = (iso: string) =>
+    new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+
+  return (
+    <Modal open onClose={onClose} title={`Stock: ${product.name}`}>
+      <p className="stock-now">
+        <b>{product.qty}</b> on the shelf
+        {held > 0 && (
+          <>
+            {" "}
+            · <b>{held}</b> in shoppers&apos; checkouts · <b>{Math.max(0, product.qty - held)}</b> free to sell
+          </>
+        )}
+      </p>
+      <form className="form stock-receive" onSubmit={receive}>
+        <h3>A shipment came in</h3>
+        <div className="two">
+          <label htmlFor="rcv-qty">
+            How many
+            <input id="rcv-qty" inputMode="numeric" autoComplete="off" value={qty} onChange={(e) => setQty(e.target.value)} />
+          </label>
+          <label htmlFor="rcv-note">
+            Note (optional)
+            <input
+              id="rcv-note"
+              maxLength={200}
+              autoComplete="off"
+              placeholder="Supplier, PO or packing slip"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+            />
+          </label>
+        </div>
+        <button type="submit" className="btn" disabled={busy}>
+          {busy ? "Adding…" : "Add to stock"}
+        </button>
+      </form>
+      <h3>History</h3>
+      {moves === null ? (
+        <p className="hint">Loading…</p>
+      ) : moves.length === 0 ? (
+        <p className="hint">No changes logged yet.</p>
+      ) : (
+        <ol className="stock-moves">
+          {moves.map((m) => (
+            <li key={m.id}>
+              <span className="when">{when(m.created_at)}</span>
+              <span className="what">
+                {MOVE_LABEL[m.kind] ?? m.kind}
+                {m.order_id && numbers[m.order_id] ? ` · order #${numbers[m.order_id]}` : ""}
+                {m.note ? ` · ${m.note}` : ""}
+              </span>
+              <span className={m.delta < 0 ? "delta out" : "delta in"}>{m.delta > 0 ? `+${m.delta}` : m.delta}</span>
+              <span className="after">{m.qty_after} left</span>
+            </li>
+          ))}
+        </ol>
+      )}
     </Modal>
   );
 }

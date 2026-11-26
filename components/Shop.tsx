@@ -28,6 +28,7 @@ import { madeInUSA, type Category } from "@/lib/foundation";
 import MachinePicker from "./MachinePicker";
 import QuoteForm from "./QuoteForm";
 import { useCart, writeCart } from "@/lib/cart";
+import { HELD_KEY, cartSignature, countdown, heldFromReply, heldStillGood, readHeld, type HeldCheckout } from "@/lib/holds";
 import {
   TYPES,
   money,
@@ -69,7 +70,7 @@ function FitPill({ state, label }: { state: FitState; label: string }) {
   return <span className="pill bad">Not listed for your {label}</span>;
 }
 
-export default function Shop({ products, settings, ok, openCart, categories = [], xrefs = {}, fits = {}, charges = {}, kits = {}, spots = {} }: Props) {
+export default function Shop({ products: listed, settings, ok, openCart, categories = [], xrefs = {}, fits = {}, charges = {}, kits = {}, spots = {} }: Props) {
   const router = useRouter();
   const cart = useCart();
   const [q, setQ] = useState("");
@@ -122,6 +123,40 @@ export default function Shop({ products, settings, ok, openCart, categories = []
   }, []);
   const mine: MyMachine | null = garage.machines.find((m) => m.id === garage.active) ?? null;
 
+  // A checkout this shopper started and walked away from: the parts are still
+  // held for them until the payment page closes. Read after the first paint.
+  const [held, setHeld] = useState<HeldCheckout | null>(null);
+  const [clock, setClock] = useState(0);
+  useEffect(() => {
+    const t = setTimeout(() => {
+      try {
+        setHeld(readHeld(window.localStorage.getItem(HELD_KEY)));
+      } catch {
+        /* storage blocked: no saved checkout */
+      }
+      setClock(Date.now());
+    }, 0);
+    return () => clearTimeout(t);
+  }, []);
+  const cartSig = cartSignature(Object.entries(cart).map(([id, qty]) => ({ id, qty })));
+  // Still running: the parts are theirs until it ends or they start over (the
+  // next checkout lets it go first). The banner shows only while the cart is
+  // exactly what was held.
+  const running = clock > 0 && heldStillGood(held, held?.sig ?? "", clock) ? held : null;
+  const ownHold = running && running.sig === cartSig ? running : null;
+  useEffect(() => {
+    if (!running) return;
+    const every = setInterval(() => setClock(Date.now()), 1000);
+    return () => clearInterval(every);
+  }, [running]);
+  const holdLeft = ownHold ? countdown(Date.parse(ownHold.ends_at), clock + ownHold.skew) : null;
+
+  // The shop's counts leave out everything held, this shopper's own hold
+  // included; give their own parts back to them.
+  const products = useMemo(
+    () => (running ? listed.map((p) => (running.items[p.id] ? { ...p, qty: p.qty + running.items[p.id] } : p)) : listed),
+    [listed, running],
+  );
   const byId = useMemo(() => new Map(products.map((p) => [p.id, p])), [products]);
   const say = useCallback((text: string, bad = false) => setToast({ text, bad, at: Date.now() }), []);
   const clearToast = useCallback(() => setToast(null), []);
@@ -168,15 +203,27 @@ export default function Shop({ products, settings, ok, openCart, categories = []
       const res = await fetch("/api/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items: liveLines.map((l) => ({ id: l.id, qty: l.qty })) }),
+        body: JSON.stringify({ items: liveLines.map((l) => ({ id: l.id, qty: l.qty })), release: held?.order_id }),
       });
       const data = (await res.json()) as {
         url?: string;
+        order_id?: string;
+        held_until?: string;
+        now?: string;
         error?: string;
         message?: string;
         problems?: Array<{ id: string; available: number }>;
       };
       if (res.ok && data.url) {
+        try {
+          if (data.order_id && data.held_until && data.now) {
+            // The cart becomes exactly what is held, so the saved checkout matches it.
+            writeCart(Object.fromEntries(liveLines.map((l) => [l.id, l.qty])));
+            window.localStorage.setItem(HELD_KEY, JSON.stringify(heldFromReply({ order_id: data.order_id, url: data.url, held_until: data.held_until, now: data.now }, liveLines.map((l) => ({ id: l.id, qty: l.qty })))));
+          } else window.localStorage.removeItem(HELD_KEY);
+        } catch {
+          /* storage blocked: the hold still runs on the server */
+        }
         window.location.assign(data.url);
         return;
       }
@@ -567,7 +614,17 @@ export default function Shop({ products, settings, ok, openCart, categories = []
                 Minimum order is {money(settings.order_min_cents)}. Add {money(short)} more to check out.
               </p>
             )}
-            {plan.online ? (
+            {plan.online && ownHold && holdLeft ? (
+              <div className="held">
+                <p>
+                  <b>Your parts are held for you.</b> Time left to pay: <span className="held-clock">{holdLeft}</span>
+                </p>
+                <a className="btn" href={ownHold.url}>
+                  Finish checkout
+                </a>
+                <p className="hint">Change your cart to start over. After the time runs out, the parts go back on sale.</p>
+              </div>
+            ) : plan.online ? (
               <>
                 <button
                   type="button"

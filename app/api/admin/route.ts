@@ -13,6 +13,7 @@ import {
   type ParcelPreset,
   type QuoteRequest,
   type ShipFrom,
+  type StockMove,
 } from "@/lib/admin-types";
 import { isAdmin, sameOrigin } from "@/lib/auth";
 import {
@@ -26,6 +27,7 @@ import {
 } from "@/lib/catalog";
 import { coreCredit, storeDate } from "@/lib/checkout-rules";
 import { placeByType } from "@/lib/foundation-server";
+import { heldMap } from "@/lib/holds";
 import { getStripe } from "@/lib/payments";
 import { T, adminDb, env, getConfig, json, setConfig } from "@/lib/server";
 import { buyLabel, freshLabelUrl, getRates } from "@/lib/shippo";
@@ -82,11 +84,12 @@ async function loadData(db: SupabaseClient): Promise<AdminData> {
   // Charges and quotes came later: if their tables are missing the rest of the
   // back office still loads, with these lists empty.
   const orderIds = (o.data ?? []).map((r) => r.id as string);
-  const [ch, q] = await Promise.all([
+  const [ch, q, h] = await Promise.all([
     orderIds.length
       ? db.from("fittings_order_charges").select("*, returns:fittings_core_returns(*)").in("order_id", orderIds)
       : Promise.resolve({ data: [], error: null }),
     db.from("fittings_quote_requests").select("*").order("created_at", { ascending: false }).limit(200),
+    db.rpc("fittings_held"),
   ]);
   const chargesBy = new Map<string, OrderCharge[]>();
   for (const row of ch.error ? [] : (ch.data ?? [])) {
@@ -116,6 +119,7 @@ async function loadData(db: SupabaseClient): Promise<AdminData> {
       charges: (chargesBy.get(ord.id) ?? []).sort((a, b) => a.id - b.id),
     })),
     quotes: q.error ? [] : ((q.data ?? []) as QuoteRequest[]),
+    held: heldMap(h.error ? [] : (h.data as Array<{ product_id: unknown; held: unknown }>)),
     integrations: {
       stripe: modeOf(env.stripe, "_live_", "_test_"),
       webhook: webhook || !!process.env.STRIPE_WEBHOOK_SECRET,
@@ -211,8 +215,34 @@ async function run(action: string, a: Payload, db: SupabaseClient, origin: strin
     case "qty.adjust": {
       const delta = int(a.delta);
       if (delta == null || delta === 0) return {};
-      await must(db.rpc("fittings_adjust_qty", { p_id: id, p_delta: delta }));
+      const kind = a.kind === "receive" || a.kind === "return" ? a.kind : "adjust";
+      if (kind !== "adjust" && delta < 0) fail("A shipment or return adds parts. Use the count to take parts off.");
+      await must(db.rpc("fittings_adjust_qty", { p_id: id, p_delta: delta, p_kind: kind, p_note: str(a.note, 200) }));
       return {};
+    }
+
+    case "qty.count": {
+      const n = int(a.qty);
+      if (n == null || n < 0) fail("Quantity must be a whole number, 0 or more.");
+      await must(db.rpc("fittings_count_qty", { p_id: id, p_qty: n, p_note: str(a.note, 200) }));
+      return {};
+    }
+
+    case "stock.history": {
+      const { data, error } = await db
+        .from("fittings_stock_moves")
+        .select("id, delta, qty_after, kind, order_id, note, created_at")
+        .eq("product_id", id)
+        .order("id", { ascending: false })
+        .limit(50);
+      if (error) fail("Stock history isn't set up yet.");
+      const ids = [...new Set((data ?? []).map((m) => m.order_id).filter(Boolean))] as string[];
+      const numbers: Record<string, number> = {};
+      if (ids.length) {
+        const o = await db.from(T.orders).select("id, number").in("id", ids);
+        for (const r of o.data ?? []) numbers[r.id as string] = r.number as number;
+      }
+      return { moves: (data ?? []) as StockMove[], numbers };
     }
 
     case "cost.set": {
@@ -332,6 +362,7 @@ async function run(action: string, a: Payload, db: SupabaseClient, origin: strin
             ? str(s.ship_cutoff, 5)
             : fail("Give the same-day cutoff as a time, like 14:00."),
           ship_tz: SHIP_ZONES.some((z) => z.id === s.ship_tz) ? s.ship_tz : "America/Chicago",
+          hold_minutes: ((n) => (n != null && n >= 30 && n <= 1440 ? n : fail("Hold parts in checkout for 30 to 1440 minutes.")))(int(s.hold_minutes)),
         }),
       );
       const c = (a.config ?? {}) as Payload;

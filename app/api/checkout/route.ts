@@ -1,9 +1,14 @@
 // Starts a Stripe Checkout session. Prices, stock and shipping are all
 // re-checked here on the server; nothing the browser sends is trusted but
 // the item ids and quantities.
+//
+// Starting checkout holds the parts for the shopper (lib/holds.ts): other
+// shoppers can't buy them until the payment page closes. If the shopper is
+// starting over with a changed cart, their earlier hold is let go first.
 import { money, normalizeProduct, normalizeSettings, sellable, shippingFor } from "@/lib/catalog";
 import { checkoutPlan } from "@/lib/checkout-rules";
 import { surchargeLines, type Surcharge } from "@/lib/foundation";
+import { availableQty, heldMap, holdMessage, holdWindow, isOrderId } from "@/lib/holds";
 import { getStripe } from "@/lib/payments";
 import { T, adminDb, env, getConfig, json } from "@/lib/server";
 
@@ -33,15 +38,25 @@ export async function POST(req: Request) {
   if (wanted.size === 0) return json({ error: "empty", message: "Your cart is empty." }, 400);
 
   const db = adminDb();
-  const [found, settingsRow, taxMode, extras] = await Promise.all([
+  const release = (body as { release?: unknown })?.release;
+  if (isOrderId(release)) await letGo(db, stripe, release);
+
+  const [found, settingsRow, taxMode, extras, heldRows] = await Promise.all([
     db.from(T.products).select("*").in("id", [...wanted.keys()]),
     db.from(T.settings).select("*").eq("id", 1).maybeSingle(),
     getConfig<string>(db, "tax_mode"),
     db.from("fittings_surcharges").select("product_id, kind, amount_cents, refundable, label").in("product_id", [...wanted.keys()]),
+    db.rpc("fittings_held"),
   ]);
   if (found.error) return json({ error: "server", message: "The catalog could not be loaded." }, 500);
   const settings = normalizeSettings(settingsRow.data);
-  const byId = new Map((found.data ?? []).map((r) => [r.id as string, normalizeProduct(r)]));
+  const held = heldMap(heldRows.error ? [] : (heldRows.data as Array<{ product_id: unknown; held: unknown }>));
+  const byId = new Map(
+    (found.data ?? []).map((r) => {
+      const p = normalizeProduct(r);
+      return [p.id, { ...p, qty: availableQty(p.qty, held[p.id]) }];
+    }),
+  );
 
   // THE RULE, enforced where it counts: zero stock or no price cannot be bought.
   const problems: Array<{ id: string; available: number }> = [];
@@ -133,6 +148,29 @@ export async function POST(req: Request) {
   }
   const nameOf = (id: string) => byId.get(id)?.name ?? "item";
 
+  // Hold the parts. The database checks again with the products locked, so two
+  // shoppers racing for the last one can't both get it.
+  const holdWin = holdWindow(settings.hold_minutes, settings.hold_grace_minutes, Date.now());
+  const hold = await db.rpc("fittings_hold_order", { p_order_id: orderId, p_minutes: holdWin.dbMinutes });
+  if (hold.error) {
+    // Before the holds are set up the function is missing: sell as before.
+    if (!/fittings_hold_order|PGRST202|42883/.test(`${hold.error.code} ${hold.error.message}`)) {
+      await db.from(T.orders).delete().eq("id", orderId);
+      return json({ error: "server", message: "The order could not be started." }, 500);
+    }
+  } else if (!(hold.data as { ok?: boolean })?.ok) {
+    await db.from(T.orders).delete().eq("id", orderId);
+    return json(
+      {
+        error: "stock",
+        message: "Someone else just checked out with some of these parts. Your cart has been updated; please review it.",
+        problems: ((hold.data as { problems?: Array<{ id: string; available: number }> })?.problems ?? []),
+      },
+      409,
+    );
+  }
+  const holding = !hold.error;
+
   const origin = req.headers.get("origin") ?? new URL(req.url).origin;
   try {
     const session = await stripe.checkout.sessions.create({
@@ -168,8 +206,13 @@ export async function POST(req: Request) {
           },
         })),
       ],
+      ...(holding
+        ? { custom_text: { submit: { message: holdMessage(holdWin.endsAt, settings.ship_tz, pickup) } } }
+        : pickup
+          ? { custom_text: { submit: { message: "Pickup order: we'll call when it's ready at the counter." } } }
+          : {}),
       ...(pickup
-        ? { custom_text: { submit: { message: "Pickup order: we'll call when it's ready at the counter." } } }
+        ? {}
         : {
             shipping_address_collection: { allowed_countries: ["US" as const] },
             shipping_options: [
@@ -184,15 +227,38 @@ export async function POST(req: Request) {
           }),
       phone_number_collection: { enabled: true },
       ...(taxMode === "stripe" ? { automatic_tax: { enabled: true } } : {}),
-      expires_at: Math.floor(Date.now() / 1000) + 31 * 60,
+      expires_at: holdWin.stripeExpiresAt,
       success_url: `${origin}/order/success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${origin}/?cart=open`,
     });
     await db.from(T.orders).update({ stripe_session_id: session.id }).eq("id", orderId);
-    return json({ url: session.url });
+    return json({ url: session.url, order_id: orderId, ...(holding ? { held_until: holdWin.endsAt, now: new Date().toISOString() } : {}) });
   } catch (e) {
     await db.from(T.orders).update({ status: "cancelled", notes: "Checkout could not be created." }).eq("id", orderId);
+    if (holding) await db.rpc("fittings_release_holds", { p_order_id: orderId, p_reason: "cancelled" });
     console.error("checkout session failed", e);
     return json({ error: "stripe", message: "Checkout could not be started. Please try again in a moment." }, 502);
   }
+}
+
+/**
+ * The shopper changed their cart and is starting over: close their earlier
+ * payment page so it can't be paid as well, and give its parts back.
+ * Only an unpaid checkout is touched; knowing its id is the shopper's proof.
+ */
+async function letGo(db: ReturnType<typeof adminDb>, stripe: NonNullable<ReturnType<typeof getStripe>>, orderId: string) {
+  const { data } = await db.from(T.orders).select("id, status, stripe_session_id").eq("id", orderId).maybeSingle();
+  if (!data || data.status !== "pending") return;
+  if (data.stripe_session_id) {
+    try {
+      await stripe.checkout.sessions.expire(data.stripe_session_id as string);
+    } catch {
+      // Stripe refuses if the page already closed or was paid. Only a closed,
+      // unpaid page lets the parts go; a paid one is settled by the webhook.
+      const s = await stripe.checkout.sessions.retrieve(data.stripe_session_id as string).catch(() => null);
+      if (s?.status !== "expired") return;
+    }
+  }
+  await db.from(T.orders).update({ status: "expired" }).eq("id", orderId).eq("status", "pending");
+  await db.rpc("fittings_release_holds", { p_order_id: orderId, p_reason: "released" });
 }

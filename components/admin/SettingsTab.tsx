@@ -31,6 +31,7 @@ export default function SettingsTab({ data, act, say }: Props) {
     free_over: dollars(s.free_ship_over_cents),
     cutoff: s.ship_cutoff,
     tz: s.ship_tz,
+    hold: String(s.hold_minutes),
   });
   const [from, setFrom] = useState(data.config.ship_from);
   const [presets, setPresets] = useState<PresetDraft[]>(data.config.presets.map(draft));
@@ -55,6 +56,8 @@ export default function SettingsTab({ data, act, say }: Props) {
     if (Number.isNaN(freeOver) || (freeOver != null && freeOver < 0)) return say("Free shipping amount must be a dollar amount, or blank.", true);
     if (!Number.isInteger(low) || low < 0) return say("The low-stock number must be a whole number.", true);
     if (!/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/.test(store.cutoff.trim())) return say("Give the same-day cutoff as a time, like 14:00.", true);
+    const hold = Number(store.hold);
+    if (!Number.isInteger(hold) || hold < 30 || hold > 1440) return say("Hold parts in checkout for 30 to 1440 minutes.", true);
     setBusy(true);
     const done = await act("settings.save", {
       settings: {
@@ -68,6 +71,7 @@ export default function SettingsTab({ data, act, say }: Props) {
         free_ship_over_cents: freeOver,
         ship_cutoff: store.cutoff.trim(),
         ship_tz: store.tz,
+        hold_minutes: hold,
       },
       config: {
         ship_from: from,
@@ -155,6 +159,13 @@ export default function SettingsTab({ data, act, say }: Props) {
               <input id="s-low" inputMode="numeric" autoComplete="off" value={store.low_stock} onChange={st("low_stock")} />
             </label>
           </div>
+          <label htmlFor="s-hold">
+            Hold parts in checkout for (minutes)
+            <input id="s-hold" inputMode="numeric" autoComplete="off" value={store.hold} onChange={st("hold")} aria-describedby="s-hold-help" />
+            <span className="hint" id="s-hold-help">
+              From the moment a shopper starts checkout, nobody else can buy those parts. Stripe allows 30 to 1440 (24 hours).
+            </span>
+          </label>
           <label htmlFor="s-tagline">
             Headline
             <input id="s-tagline" maxLength={90} autoComplete="off" value={store.tagline} onChange={st("tagline")} />

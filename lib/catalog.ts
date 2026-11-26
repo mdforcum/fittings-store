@@ -39,6 +39,10 @@ export type Settings = {
   /** Same-day cutoff, "14:00", in ship_tz. */
   ship_cutoff: string;
   ship_tz: string;
+  /** How long checkout keeps the parts for a shopper. */
+  hold_minutes: number;
+  /** Extra time the parts stay kept after Stripe's page closes, for a late payment notice. */
+  hold_grace_minutes: number;
 };
 
 export const SHIP_ZONES = [
@@ -59,6 +63,8 @@ export const DEFAULT_SETTINGS: Settings = {
   free_ship_over_cents: null,
   ship_cutoff: "14:00",
   ship_tz: "America/Chicago",
+  hold_minutes: 30,
+  hold_grace_minutes: 5,
 };
 
 export const TYPES = [
@@ -185,5 +191,7 @@ export function normalizeSettings(row: Record<string, unknown> | null | undefine
       typeof row.free_ship_over_cents === "number" ? Math.max(0, row.free_ship_over_cents) : null,
     ship_cutoff: /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/.test(s(row.ship_cutoff, "")) ? s(row.ship_cutoff, "") : "14:00",
     ship_tz: SHIP_ZONES.some((z) => z.id === row.ship_tz) ? s(row.ship_tz, "") : "America/Chicago",
+    hold_minutes: Math.min(1440, Math.max(30, Math.floor(n(row.hold_minutes, 30)))),
+    hold_grace_minutes: Math.min(60, Math.max(0, Math.floor(n(row.hold_grace_minutes, 5)))),
   };
 }

@@ -147,6 +147,19 @@ export type AdminData = {
   orders: Order[];
   quotes: QuoteRequest[];
   integrations: { stripe: Mode; webhook: boolean; shippo: Mode };
+  /** Parts sitting in shoppers' checkouts right now, by item. */
+  held: Record<string, number>;
+};
+
+/** One line of an item's stock history. */
+export type StockMove = {
+  id: number;
+  delta: number;
+  qty_after: number;
+  kind: "start" | "receive" | "count" | "adjust" | "edit" | "sale" | "return";
+  order_id: string | null;
+  note: string;
+  created_at: string;
 };
 
 export type RateQuote = {

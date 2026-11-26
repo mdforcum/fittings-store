@@ -76,5 +76,9 @@ export async function fulfillSession(
 export async function expireOrder(session: Stripe.Checkout.Session): Promise<void> {
   const orderId = session.client_reference_id ?? session.metadata?.order_id;
   if (!orderId) return;
-  await adminDb().from(T.orders).update({ status: "expired" }).eq("id", orderId).eq("status", "pending");
+  const db = adminDb();
+  await db.from(T.orders).update({ status: "expired" }).eq("id", orderId).eq("status", "pending");
+  // The payment page closed unpaid: its parts go back on sale. (Before the
+  // holds are set up this call fails harmlessly.)
+  await db.rpc("fittings_release_holds", { p_order_id: orderId, p_reason: "expired" });
 }
