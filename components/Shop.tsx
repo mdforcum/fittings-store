@@ -28,7 +28,7 @@ import { madeInUSA, type Category } from "@/lib/foundation";
 import MachinePicker from "./MachinePicker";
 import QuoteForm from "./QuoteForm";
 import { useCart, writeCart } from "@/lib/cart";
-import { lookStyle, type StoreLook } from "@/lib/storefront";
+import { lookStyle, storeShipping, type ShelfPlace, type StoreLook } from "@/lib/storefront";
 import { HELD_KEY, cartSignature, countdown, heldFromReply, heldStillGood, readHeld, type HeldCheckout } from "@/lib/holds";
 import {
   TYPES,
@@ -56,6 +56,8 @@ type Props = {
   spots?: Record<string, FindIt>;
   /** Another business's storefront: its name, logo and colors. Null for the Backroad Iron store. */
   look?: StoreLook | null;
+  /** Open locations and what is on each shelf, when shoppers may filter by location. */
+  shelfStock?: ShelfPlace[];
 };
 
 const GARAGE_KEY = "my-machines";
@@ -73,11 +75,15 @@ function FitPill({ state, label }: { state: FitState; label: string }) {
   return <span className="pill bad">Not listed for your {label}</span>;
 }
 
-export default function Shop({ products: listed, settings: base, ok, openCart, categories = [], xrefs = {}, fits = {}, charges = {}, kits = {}, spots = {}, look = null }: Props) {
-  // A storefront shows its own name and contact details.
+export default function Shop({ products: listed, settings: base, ok, openCart, categories = [], xrefs = {}, fits = {}, charges = {}, kits = {}, spots = {}, look = null, shelfStock = [] }: Props) {
+  // A storefront shows its own name, contact details and, if it sets them, shipping charges.
   const settings: Settings = look
-    ? { ...base, store_name: look.name, tagline: look.tagline || base.tagline, phone: look.phone, email: look.email }
+    ? storeShipping({ ...base, store_name: look.name, tagline: look.tagline || base.tagline, phone: look.phone, email: look.email }, look)
     : base;
+  // The location a shopper picked: only parts on the shelf there are shown.
+  const [placeId, setPlaceId] = useState("");
+  const place = shelfStock.find((x) => x.id === placeId) ?? null;
+  const manyDealers = new Set(shelfStock.map((x) => x.dealer)).size > 1;
   const router = useRouter();
   const cart = useCart();
   const [q, setQ] = useState("");
@@ -265,6 +271,7 @@ export default function Shop({ products: listed, settings: base, ok, openCart, c
     if (nav.length ? shelfIds && !shelfIds.has(p.category_id ?? "") : filter !== "all" && p.type !== filter) return false;
     if (condition !== "all" && p.condition !== condition) return false;
     if (instock && !sellable(p)) return false;
+    if (place && !(place.stock[p.id] > 0)) return false;
     if (usaOnly && !madeInUSA(p.origin)) return false;
     if (fitsOnly && mine && !["fits", "universal", "checkSerial"].includes(fitOf(p).kind)) return false;
     return true;
@@ -399,6 +406,19 @@ export default function Shop({ products: listed, settings: base, ok, openCart, c
                 ))}
               </div>
             )}
+            {shelfStock.length > 0 && (
+              <label className="place-pick" htmlFor="placePick">
+                Parts on the shelf at
+                <select id="placePick" value={placeId} onChange={(e) => setPlaceId(e.target.value)}>
+                  <option value="">Any location</option>
+                  {shelfStock.map((x) => (
+                    <option key={x.id} value={x.id}>
+                      {[manyDealers ? x.dealer : "", x.name, x.town].filter(Boolean).join(" · ")}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <label className="check" htmlFor="instockOnly">
               <input
                 type="checkbox"
@@ -424,9 +444,17 @@ export default function Shop({ products: listed, settings: base, ok, openCart, c
 
         {!ok && <p className="empty">The catalog can&apos;t be loaded right now. Please check back shortly.</p>}
         {ok && products.length === 0 && <p className="empty">The catalog is being stocked. Check back soon.</p>}
+        {place && shown.length > 0 && (
+          <p className="place-note">
+            Showing parts on the shelf at {place.name}
+            {place.town ? `, ${place.town}` : ""}.
+          </p>
+        )}
         {ok && products.length > 0 && shown.length === 0 && (
           <p className="empty">
-            Nothing matches that. Try a part number, the OEM number on the old part, or a thread size like 3/4-16.
+            {place
+              ? `Nothing on the shelf at ${place.name} matches that. Pick Any location to see every part.`
+              : "Nothing matches that. Try a part number, the OEM number on the old part, or a thread size like 3/4-16."}
           </p>
         )}
 

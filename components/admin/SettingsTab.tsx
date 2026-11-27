@@ -33,6 +33,7 @@ export default function SettingsTab({ data, act, say }: Props) {
     cutoff: s.ship_cutoff,
     tz: s.ship_tz,
     hold: String(s.hold_minutes),
+    location_filter: s.location_filter,
   });
   const [from, setFrom] = useState(data.config.ship_from);
   const [presets, setPresets] = useState<PresetDraft[]>(data.config.presets.map(draft));
@@ -73,6 +74,7 @@ export default function SettingsTab({ data, act, say }: Props) {
         ship_cutoff: store.cutoff.trim(),
         ship_tz: store.tz,
         hold_minutes: hold,
+        location_filter: store.location_filter,
       },
       config: {
         ship_from: from,
@@ -166,6 +168,15 @@ export default function SettingsTab({ data, act, say }: Props) {
             <span className="hint" id="s-hold-help">
               From the moment a shopper starts checkout, nobody else can buy those parts. Stripe allows 30 to 1440 (24 hours).
             </span>
+          </label>
+          <label className="check-row" htmlFor="s-locfilter">
+            <input
+              type="checkbox"
+              id="s-locfilter"
+              checked={store.location_filter}
+              onChange={(e) => setStore({ ...store, location_filter: e.target.checked })}
+            />
+            Let shoppers pick a location and see only the parts on the shelf there
           </label>
           <label htmlFor="s-tagline">
             Headline

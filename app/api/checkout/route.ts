@@ -10,6 +10,7 @@ import { checkoutPlan } from "@/lib/checkout-rules";
 import { surchargeLines, type Surcharge } from "@/lib/foundation";
 import { availableQty, heldMap, holdMessage, holdWindow, isOrderId } from "@/lib/holds";
 import { getStripe } from "@/lib/payments";
+import { storeShipping } from "@/lib/storefront";
 import { storeForRequest } from "@/lib/storefront-server";
 import { T, adminDb, env, getConfig, json } from "@/lib/server";
 
@@ -52,7 +53,8 @@ export async function POST(req: Request) {
     db.rpc("fittings_held"),
   ]);
   if (found.error) return json({ error: "server", message: "The catalog could not be loaded." }, 500);
-  const settings = normalizeSettings(settingsRow.data);
+  // A dealer's store charges its own shipping and minimum when it sets them.
+  const settings = storeShipping(normalizeSettings(settingsRow.data), storefront);
   const held = heldMap(heldRows.error ? [] : (heldRows.data as Array<{ product_id: unknown; held: unknown }>));
   const byId = new Map(
     (found.data ?? []).map((r) => {
@@ -109,7 +111,14 @@ export async function POST(req: Request) {
   const order = await db
     .from(T.orders)
     .insert({
-      ...(storefront ? { storefront_id: storefront.id, dealer_id: storefront.dealer_id } : {}),
+      ...(storefront
+        ? {
+            storefront_id: storefront.id,
+            dealer_id: storefront.dealer_id,
+            // A store showing only its own stock is filled only from its own shelves.
+            ...(storefront.has_options ? { own_stock_only: storefront.stock_scope === "own" } : {}),
+          }
+        : {}),
       status: "pending",
       ship_method: pickup ? "pickup" : "parcel",
       subtotal_cents: subtotal,

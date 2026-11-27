@@ -43,6 +43,8 @@ export type Settings = {
   hold_minutes: number;
   /** Extra time the parts stay kept after Stripe's page closes, for a late payment notice. */
   hold_grace_minutes: number;
+  /** Shoppers may pick a location and see only the parts on the shelf there. */
+  location_filter: boolean;
 };
 
 export const SHIP_ZONES = [
@@ -65,6 +67,7 @@ export const DEFAULT_SETTINGS: Settings = {
   ship_tz: "America/Chicago",
   hold_minutes: 30,
   hold_grace_minutes: 5,
+  location_filter: false,
 };
 
 export const TYPES = [
@@ -193,5 +196,6 @@ export function normalizeSettings(row: Record<string, unknown> | null | undefine
     ship_tz: SHIP_ZONES.some((z) => z.id === row.ship_tz) ? s(row.ship_tz, "") : "America/Chicago",
     hold_minutes: Math.min(1440, Math.max(30, Math.floor(n(row.hold_minutes, 30)))),
     hold_grace_minutes: Math.min(60, Math.max(0, Math.floor(n(row.hold_grace_minutes, 5)))),
+    location_filter: row.location_filter === true,
   };
 }

@@ -507,3 +507,14 @@ dialog.sheet { margin: 0 0 0 auto; width: min(440px, 100%); max-width: 100%; hei
 .ms-lines { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
 .ms-lines li { display: grid; grid-template-columns: 1fr 96px auto; gap: 8px; align-items: end; }
 .ms-lines label { display: grid; gap: 4px; }
+.place-pick { display: grid; gap: 4px; font-weight: 600; width: 100%; max-width: 360px; }
+.place-pick select { width: 100%; min-width: 0; }
+.place-pick select { min-height: 48px; padding: 0 12px; border: 1px solid var(--rule); background: var(--surface); color: var(--ink); font: inherit; font-weight: 400; }
+.place-note { margin: 8px 0 0; font-weight: 600; }
+.form .check-row { display: flex; flex-direction: row; align-items: center; gap: 10px; min-height: 48px; font-weight: 500; }
+.form .check-row input { width: 22px; height: 22px; min-height: 0; flex: none; }
+.sf-choice { border: 1px solid var(--rule); padding: 10px 12px; display: grid; gap: 4px; }
+.sf-choice legend { font-weight: 600; padding: 0 4px; }
+.sf-choice label { display: flex; align-items: flex-start; gap: 10px; min-height: 48px; padding-top: 12px; font-weight: 500; }
+.sf-choice input[type="radio"], .sf-choice input[type="checkbox"] { width: 22px; height: 22px; flex: none; margin-top: 1px; }
+.sf-choice .hint { margin: 0 0 0 32px; }

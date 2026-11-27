@@ -19,10 +19,39 @@ export type Storefront = {
   color_accent: string;
   color_button: string;
   live: boolean;
+  /** 'own': only the dealer's shelves. 'network': every part on Backroad Iron, the dealer's shelves first. */
+  stock_scope: "own" | "network";
+  /** Shoppers may pick a location and see only the parts on the shelf there. */
+  location_filter: boolean;
+  /** The dealer's own shipping charges instead of Backroad Iron's. */
+  ship_own: boolean;
+  ship_flat_cents: number;
+  /** Null: no free shipping. */
+  free_ship_over_cents: number | null;
+  order_min_cents: number;
+  /** False until supabase/add-storefront-options.sql has run (the options above are defaults). */
+  has_options: boolean;
 };
 
 /** What the shop page needs to dress itself; no ids beyond the dealer's. */
-export type StoreLook = Pick<Storefront, "slug" | "name" | "tagline" | "phone" | "email" | "logo_url" | "color_header" | "color_accent" | "color_button"> & {
+export type StoreLook = Pick<
+  Storefront,
+  | "slug"
+  | "name"
+  | "tagline"
+  | "phone"
+  | "email"
+  | "logo_url"
+  | "color_header"
+  | "color_accent"
+  | "color_button"
+  | "stock_scope"
+  | "location_filter"
+  | "ship_own"
+  | "ship_flat_cents"
+  | "free_ship_over_cents"
+  | "order_min_cents"
+> & {
   /** True when a signed-in staff member is looking at a storefront that isn't live. */
   preview: boolean;
 };
@@ -46,7 +75,55 @@ export function normalizeStorefront(row: Record<string, unknown>): Storefront {
     color_accent: hex(row.color_accent, "#e81820"),
     color_button: hex(row.color_button, "#b3121a"),
     live: row.live === true,
+    stock_scope: row.stock_scope === "network" ? "network" : "own",
+    location_filter: row.location_filter === true,
+    ship_own: row.ship_own === true,
+    ship_flat_cents: cents(row.ship_flat_cents, 800),
+    free_ship_over_cents: typeof row.free_ship_over_cents === "number" && row.free_ship_over_cents >= 0 ? Math.floor(row.free_ship_over_cents) : null,
+    order_min_cents: cents(row.order_min_cents, 0),
+    has_options: "stock_scope" in row,
   };
+}
+
+const cents = (v: unknown, d: number) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.floor(v) : d);
+
+/** Shipping for a store: the dealer's own charges when it sets them, else Backroad Iron's. */
+export function storeShipping<T extends { shipping_flat_cents: number; free_ship_over_cents: number | null; order_min_cents: number }>(
+  base: T,
+  look: Pick<StoreLook, "ship_own" | "ship_flat_cents" | "free_ship_over_cents" | "order_min_cents"> | null,
+): T {
+  if (!look?.ship_own) return base;
+  return { ...base, shipping_flat_cents: look.ship_flat_cents, free_ship_over_cents: look.free_ship_over_cents, order_min_cents: look.order_min_cents };
+}
+
+/** Dollars typed by staff → cents; "" → null; NaN when it isn't a money amount. */
+export function dollarsToCents(typed: string): number | null {
+  const t = typed.replace(/[$,\s]/g, "");
+  if (t === "") return null;
+  if (!/^\d+(\.\d{1,2})?$/.test(t)) return Number.NaN;
+  return Math.round(Number(t) * 100);
+}
+
+/** One open location and what is on its shelf, for the shoppers' location filter. */
+export type ShelfPlace = { id: string; name: string; town: string; dealer: string; stock: Record<string, number> };
+
+export function shelfPlaces(
+  rows: Array<{ location_id: unknown; location_name: unknown; city: unknown; state: unknown; dealer_name: unknown; product_id: unknown; qty: unknown }> | null | undefined,
+): ShelfPlace[] {
+  const out: ShelfPlace[] = [];
+  for (const r of rows ?? []) {
+    if (typeof r.location_id !== "string" || typeof r.product_id !== "string") continue;
+    const n = Number(r.qty);
+    if (!(n > 0)) continue;
+    let p = out.find((x) => x.id === r.location_id);
+    if (!p) {
+      const town = [s(r.city), s(r.state)].filter(Boolean).join(", ");
+      p = { id: r.location_id, name: s(r.location_name), town, dealer: s(r.dealer_name), stock: {} };
+      out.push(p);
+    }
+    p.stock[r.product_id] = Math.floor(n);
+  }
+  return out;
 }
 
 /** The web address a request came in on, lower case, without a port or trailing dot. */
@@ -118,6 +195,12 @@ function look(f: Storefront, preview: boolean): StoreLook {
     color_header: f.color_header,
     color_accent: f.color_accent,
     color_button: f.color_button,
+    stock_scope: f.stock_scope,
+    location_filter: f.location_filter,
+    ship_own: f.ship_own,
+    ship_flat_cents: f.ship_flat_cents,
+    free_ship_over_cents: f.free_ship_over_cents,
+    order_min_cents: f.order_min_cents,
     preview,
   };
 }

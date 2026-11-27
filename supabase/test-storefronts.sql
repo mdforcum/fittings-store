@@ -1,5 +1,6 @@
 -- Checks for add-storefronts.sql, on a scratch database with schema.sql and
--- the stock-holds, locations and storefronts changes loaded:
+-- the stock-holds, locations, storefronts and storefront-options changes loaded
+-- (these orders come from a store that shows only its own stock):
 --   psql -v ON_ERROR_STOP=1 -d <scratch> -f supabase/test-storefronts.sql
 begin;
 
@@ -23,10 +24,10 @@ select pg_temp.check((select qty from shop.fittings_dealer_stock(pg_temp.dealer(
   and not exists (select 1 from shop.fittings_dealer_stock(pg_temp.dealer('mccormick-diesel')) where product_id = 'b'),
   'McCormick''s store shows only what is on its own shelf');
 
-insert into shop.fittings_orders (id, status, ship_method, dealer_id) values
-  ('00000000-0000-4000-8000-0000000000d1', 'pending', 'parcel', pg_temp.dealer('mccormick-diesel')),
-  ('00000000-0000-4000-8000-0000000000d2', 'pending', 'parcel', pg_temp.dealer('mccormick-diesel')),
-  ('00000000-0000-4000-8000-0000000000d3', 'pending', 'parcel', null);
+insert into shop.fittings_orders (id, status, ship_method, dealer_id, own_stock_only) values
+  ('00000000-0000-4000-8000-0000000000d1', 'pending', 'parcel', pg_temp.dealer('mccormick-diesel'), true),
+  ('00000000-0000-4000-8000-0000000000d2', 'pending', 'parcel', pg_temp.dealer('mccormick-diesel'), true),
+  ('00000000-0000-4000-8000-0000000000d3', 'pending', 'parcel', null, false);
 insert into shop.fittings_order_items (order_id, product_id, name, unit_price_cents, qty) values
   ('00000000-0000-4000-8000-0000000000d1', 'a', 'Cap', 100, 2),
   ('00000000-0000-4000-8000-0000000000d2', 'a', 'Cap', 100, 1),

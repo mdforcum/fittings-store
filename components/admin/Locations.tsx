@@ -3,7 +3,9 @@
 import { useState } from "react";
 import type { AdminData } from "@/lib/admin-types";
 import { normCode, type Dealer, type StoreLocation } from "@/lib/places";
-import type { Storefront } from "@/lib/storefront";
+import { dollarsToCents, type Storefront } from "@/lib/storefront";
+
+const centsText = (c: number) => (c / 100).toFixed(2);
 import type { Act, Say } from "../Admin";
 
 type Props = { data: AdminData; act: Act; say: Say };
@@ -247,16 +249,44 @@ function StorefrontForm({
     color_accent: sf?.color_accent ?? "#e81820",
     color_button: sf?.color_button ?? "#b3121a",
     live: sf?.live ?? false,
+    stock_scope: sf?.stock_scope ?? "own",
+    location_filter: sf?.location_filter ?? false,
+    ship_own: sf?.ship_own ?? false,
+    ship_flat: centsText(sf?.ship_flat_cents ?? 800),
+    free_over: sf?.free_ship_over_cents != null ? centsText(sf.free_ship_over_cents) : "",
+    order_min: centsText(sf?.order_min_cents ?? 0),
   });
   const [busy, setBusy] = useState(false);
-  const set = (k: Exclude<keyof typeof f, "live">) => (e: React.ChangeEvent<HTMLInputElement>) => setF({ ...f, [k]: e.target.value });
+  const set = (k: Exclude<keyof typeof f, "live" | "location_filter" | "ship_own">) => (e: React.ChangeEvent<HTMLInputElement>) =>
+    setF({ ...f, [k]: e.target.value });
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
+    const flat = dollarsToCents(f.ship_flat);
+    const free = dollarsToCents(f.free_over);
+    const min = dollarsToCents(f.order_min);
+    if (f.ship_own) {
+      if (flat == null || Number.isNaN(flat)) return say("Enter the shipping charge per order, like 12.00. Use 0 for free shipping.", true);
+      if (Number.isNaN(free)) return say("Free shipping over: enter an amount like 150.00, or leave it blank.", true);
+      if (Number.isNaN(min)) return say("Order minimum: enter an amount like 15.00, or leave it blank for none.", true);
+    }
+    const { ship_flat, free_over, order_min, ...rest } = f;
+    void ship_flat;
+    void free_over;
+    void order_min;
     setBusy(true);
-    const done = await act("storefront.save", { ...f, dealer_id: dealer.id, ...(sf ? { storefront_id: sf.id } : {}) });
+    const done = await act("storefront.save", {
+      ...rest,
+      ship_flat_cents: flat != null && !Number.isNaN(flat) ? flat : 0,
+      free_ship_over_cents: free != null && !Number.isNaN(free) ? free : null,
+      order_min_cents: min != null && !Number.isNaN(min) ? min : 0,
+      dealer_id: dealer.id,
+      ...(sf ? { storefront_id: sf.id } : {}),
+    });
     setBusy(false);
-    if (done) say(sf ? "Store saved" : `Set up ${f.name.trim()}'s store`);
+    if (done) {
+      say(done.options_saved === false ? "Store saved. Stock and shipping choices need a database update first." : sf ? "Store saved" : `Set up ${f.name.trim()}'s store`);
+    }
   }
 
   const color = (k: "color_header" | "color_accent" | "color_button", label: string) => (
@@ -309,6 +339,51 @@ function StorefrontForm({
         {color("color_accent", "Stripe")}
         {color("color_button", "Buttons")}
       </div>
+      <fieldset className="sf-choice">
+        <legend>Parts to show</legend>
+        <label>
+          <input type="radio" name={`scope-${id}`} checked={f.stock_scope === "own"} onChange={() => setF({ ...f, stock_scope: "own" })} />
+          Only {dealer.name}&apos;s own stock
+        </label>
+        <label>
+          <input type="radio" name={`scope-${id}`} checked={f.stock_scope === "network"} onChange={() => setF({ ...f, stock_scope: "network" })} />
+          Every part on Backroad Iron
+        </label>
+        <p className="hint">
+          With every part, orders use {dealer.name}&apos;s shelves first. A part from another dealer&apos;s shelf ships from there.
+        </p>
+        <label>
+          <input type="checkbox" checked={f.location_filter} onChange={(e) => setF({ ...f, location_filter: e.target.checked })} />
+          Let shoppers pick a location and see only the parts on the shelf there
+        </label>
+      </fieldset>
+      <fieldset className="sf-choice">
+        <legend>Shipping</legend>
+        <label>
+          <input type="radio" name={`ship-${id}`} checked={!f.ship_own} onChange={() => setF({ ...f, ship_own: false })} />
+          Use Backroad Iron&apos;s shipping charges
+        </label>
+        <label>
+          <input type="radio" name={`ship-${id}`} checked={f.ship_own} onChange={() => setF({ ...f, ship_own: true })} />
+          Set {dealer.name}&apos;s own
+        </label>
+        {f.ship_own && (
+          <div className="three">
+            <label htmlFor={`sfs-${id}`}>
+              Shipping per order $
+              <input id={`sfs-${id}`} inputMode="decimal" autoComplete="off" placeholder="12.00" value={f.ship_flat} onChange={set("ship_flat")} />
+            </label>
+            <label htmlFor={`sff-${id}`}>
+              Free shipping over $
+              <input id={`sff-${id}`} inputMode="decimal" autoComplete="off" placeholder="Blank for never" value={f.free_over} onChange={set("free_over")} />
+            </label>
+            <label htmlFor={`sfm-${id}`}>
+              Order minimum $
+              <input id={`sfm-${id}`} inputMode="decimal" autoComplete="off" placeholder="0.00" value={f.order_min} onChange={set("order_min")} />
+            </label>
+          </div>
+        )}
+      </fieldset>
       <div className="loc-ticks">
         <label>
           <input type="checkbox" checked={f.live} onChange={(e) => setF({ ...f, live: e.target.checked })} /> Open to shoppers at the web address

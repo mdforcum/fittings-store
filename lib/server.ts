@@ -12,6 +12,7 @@ import type { ShopCharge, ShopFit, ShopXref } from "./browse";
 import type { Category } from "./foundation";
 import { findIt, type FindIt, type Spot } from "./shelf";
 import { availableQty, heldMap } from "./holds";
+import { shelfPlaces, type ShelfPlace } from "./storefront";
 
 // Pasted values often pick up stray spaces, line breaks or wrapping quotes.
 const clean = (v: string | undefined) =>
@@ -232,4 +233,17 @@ export async function getShopCatalog(dealerId: string | null = null): Promise<Sh
     kits,
     spots,
   };
+}
+
+/**
+ * What is on the shelf at each open store location, for the shoppers'
+ * location filter: one dealer's locations, or every dealer's. Empty before
+ * supabase/add-storefront-options.sql has run.
+ */
+export async function getShelves(dealerId: string | null): Promise<ShelfPlace[]> {
+  const db = publicDb();
+  if (!db) return [];
+  const { data, error } = await db.rpc("fittings_location_stock", { p_dealer: dealerId });
+  if (error) return [];
+  return shelfPlaces(data as Parameters<typeof shelfPlaces>[0]);
 }

@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Shop from "@/components/Shop";
-import { getShopCatalog } from "@/lib/server";
+import { getShelves, getShopCatalog } from "@/lib/server";
 import { storeForRequest } from "@/lib/storefront-server";
 
 // Stock and prices are read fresh on every visit.
@@ -21,6 +21,11 @@ export async function generateMetadata({ searchParams }: { searchParams: Params 
 export default async function Home({ searchParams }: { searchParams: Params }) {
   const params = await searchParams;
   const { look, storefront } = await storeForRequest(one(params.storefront));
-  const catalog = await getShopCatalog(storefront?.dealer_id ?? null);
-  return <Shop {...catalog} look={look} openCart={params.cart === "open"} />;
+  // A store showing only its own stock is limited to its dealer's shelves;
+  // one showing the whole network sees everything, as the Backroad Iron store does.
+  const ownDealer = storefront && storefront.stock_scope === "own" ? storefront.dealer_id : null;
+  const catalog = await getShopCatalog(ownDealer);
+  const filterOn = look ? look.location_filter : catalog.settings.location_filter;
+  const shelves = filterOn ? await getShelves(ownDealer) : [];
+  return <Shop {...catalog} look={look} shelfStock={shelves} openCart={params.cart === "open"} />;
 }

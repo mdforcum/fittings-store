@@ -355,15 +355,35 @@ async function run(action: string, a: Payload, db: SupabaseClient, origin: strin
       const problem = storefrontProblem({ ...row, id: sfId }, others);
       if (problem) fail(problem);
       if (row.live && !row.host) fail("Add the web address before turning the store on.");
-      if (sfId) {
-        if (!others.some((o) => o.id === sfId)) fail("That store is gone. Reload the page.");
-        await must(db.from("fittings_storefronts").update(row).eq("id", sfId));
-      } else {
-        const ins = await db.from("fittings_storefronts").insert(row).select("id").single();
-        if (ins.error) fail(ins.error.message);
-        return { storefront_id: ins.data!.id };
+      // Stock, location filter and shipping choices (supabase/add-storefront-options.sql).
+      const centsOr = (v: unknown, what: string, nullable: boolean): number | null => {
+        if (v == null || v === "") return nullable ? null : 0;
+        const n = int(v);
+        if (n == null || n < 0 || n > 10_000_000) fail(`Check the ${what}.`);
+        return n;
+      };
+      const options = {
+        stock_scope: a.stock_scope === "network" ? "network" : "own",
+        location_filter: a.location_filter === true,
+        ship_own: a.ship_own === true,
+        ship_flat_cents: centsOr(a.ship_flat_cents, "shipping charge", false) as number,
+        free_ship_over_cents: centsOr(a.free_ship_over_cents, "free-shipping amount", true),
+        order_min_cents: centsOr(a.order_min_cents, "order minimum", false) as number,
+      };
+      if (options.ship_flat_cents > 100_000) fail("Shipping per order can be up to $1,000.");
+      const write = (withOptions: boolean) =>
+        sfId
+          ? db.from("fittings_storefronts").update(withOptions ? { ...row, ...options } : row).eq("id", sfId).select("id").single()
+          : db.from("fittings_storefronts").insert(withOptions ? { ...row, ...options } : row).select("id").single();
+      if (sfId && !others.some((o) => o.id === sfId)) fail("That store is gone. Reload the page.");
+      let saved = await write(true);
+      // Before the options exist in the database, save the rest.
+      if (saved.error && /stock_scope|location_filter|ship_own|ship_flat_cents|free_ship_over|order_min_cents/.test(saved.error.message)) {
+        saved = await write(false);
+        if (!saved.error) return { storefront_id: saved.data!.id, options_saved: false };
       }
-      return {};
+      if (saved.error) fail(saved.error.message);
+      return { storefront_id: saved.data!.id };
     }
 
     case "location.save": {
@@ -534,11 +554,11 @@ async function run(action: string, a: Payload, db: SupabaseClient, origin: strin
             ? str(s.ship_cutoff, 5)
             : fail("Give the same-day cutoff as a time, like 14:00."),
           ship_tz: SHIP_ZONES.some((z) => z.id === s.ship_tz) ? s.ship_tz : "America/Chicago",
-          ...(withHold ? { hold_minutes: holdMinutes } : {}),
+          ...(withHold ? { hold_minutes: holdMinutes, location_filter: s.location_filter === true } : {}),
         });
       const saved = await saveSettings(true);
       // Before supabase/add-stock-holds.sql runs there is no hold_minutes column.
-      if (saved.error && /hold_minutes/.test(saved.error.message)) await must(saveSettings(false));
+      if (saved.error && /hold_minutes|location_filter/.test(saved.error.message)) await must(saveSettings(false));
       else if (saved.error) throw new Error(saved.error.message);
       const c = (a.config ?? {}) as Payload;
       const from = (c.ship_from ?? {}) as Payload;
