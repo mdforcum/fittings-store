@@ -3,6 +3,7 @@
 // groups; the row under it shows the pages of the group that is open.
 
 export const TAB_NAMES = {
+  home: "Home",
   orders: "Orders",
   counter: "Counter sale",
   quotes: "Quotes",
@@ -23,6 +24,7 @@ export type Tab = keyof typeof TAB_NAMES;
 export type NavGroup = { id: string; name: string; tabs: Tab[] };
 
 export const NAV_GROUPS: NavGroup[] = [
+  { id: "home", name: "Home", tabs: ["home"] },
   { id: "sell", name: "Sell", tabs: ["orders", "counter", "quotes", "hoses"] },
   { id: "stock", name: "Stock", tabs: ["inventory", "alerts", "spots", "spacemap", "survey"] },
   { id: "catalog", name: "Catalog", tabs: ["machines", "photos"] },
@@ -30,7 +32,7 @@ export const NAV_GROUPS: NavGroup[] = [
   { id: "settings", name: "Settings", tabs: ["settings"] },
 ];
 
-export const HOME_TAB: Tab = "inventory";
+export const HOME_TAB: Tab = "home";
 
 export const isTab = (v: unknown): v is Tab => typeof v === "string" && Object.prototype.hasOwnProperty.call(TAB_NAMES, v);
 
@@ -49,4 +51,32 @@ export function tabFromHash(hash: string): Tab | null {
 export function groupTarget(group: NavGroup, last: Partial<Record<string, Tab>>): Tab {
   const was = last[group.id];
   return was && group.tabs.includes(was) ? was : group.tabs[0];
+}
+
+// Shortcuts: the pages a person pins to Home. Kept in the browser, so each
+// device has its own until the back office has named logins.
+
+export const SHORTCUTS_KEY = "backoffice-shortcuts";
+export const SHORTCUT_LIMIT = 8;
+export const DEFAULT_SHORTCUTS: Tab[] = ["orders", "counter", "inventory", "alerts"];
+
+/** Reads saved shortcuts; anything unreadable falls back to the starting set. Home is never its own shortcut. */
+export function readShortcuts(raw: string | null | undefined): Tab[] {
+  if (!raw) return DEFAULT_SHORTCUTS;
+  try {
+    const list: unknown = JSON.parse(raw);
+    if (!Array.isArray(list)) return DEFAULT_SHORTCUTS;
+    const out: Tab[] = [];
+    for (const v of list) if (isTab(v) && v !== "home" && !out.includes(v)) out.push(v);
+    return out.slice(0, SHORTCUT_LIMIT);
+  } catch {
+    return DEFAULT_SHORTCUTS;
+  }
+}
+
+/** Adds or removes a page from the shortcuts, keeping the order they were picked in. */
+export function toggleShortcut(list: Tab[], tab: Tab): Tab[] {
+  if (tab === "home") return list;
+  if (list.includes(tab)) return list.filter((t) => t !== tab);
+  return list.length >= SHORTCUT_LIMIT ? list : [...list, tab];
 }

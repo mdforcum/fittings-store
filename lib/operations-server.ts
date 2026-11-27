@@ -11,6 +11,8 @@ import { env, setConfig } from "./server";
 import { refundLabel, type RefundStatus } from "./shippo";
 import { getStripe } from "./payments";
 import { onhandMap } from "./places";
+import { expandParts, type PickKitItem, type PickMark, type PickOrderItem, type PickProduct } from "./picking";
+import type { PickProgress, SaleRow } from "./home";
 import { emailReady, queueLowStock, sendQueued, textReady } from "./notify";
 
 export class ActionError extends Error {}
@@ -61,6 +63,62 @@ export async function loadRunningLow(db: SupabaseClient): Promise<LowLine[]> {
     (lo.data ?? []).map((l) => ({ id: l.id as string, active: l.active !== false })),
     Number((s.data as { low_stock?: number } | null)?.low_stock ?? 2),
   );
+}
+
+/**
+ * What Home shows that the store data doesn't already hold: how far each open
+ * order is pulled, what's running low, and the last 30 days of sales. Every
+ * piece is optional: a table that isn't there yet just leaves its part empty.
+ */
+async function loadHome(db: SupabaseClient): Promise<Record<string, unknown>> {
+  const since = new Date(Date.now() - 30 * 86400_000).toISOString();
+  const CAP = 5000;
+  const [open, web, counter, low] = await Promise.all([
+    db.from("fittings_orders").select("id, number").eq("status", "paid").limit(500),
+    db.from("fittings_orders").select("*").in("status", ["paid", "shipped"]).gte("paid_at", since).limit(CAP),
+    db.from("fittings_counter_sales").select("total_cents, created_at").gte("created_at", since).limit(CAP),
+    loadRunningLow(db).catch(() => [] as LowLine[]),
+  ]);
+
+  // Pull progress, by the same rules as the pick ticket (a kit with no bin of its own is pulled as its parts).
+  const progress: PickProgress = {};
+  const orders = (open.error ? [] : (open.data ?? [])) as Array<{ id: string; number: number }>;
+  if (orders.length) {
+    const ids = orders.map((o) => o.id);
+    const numberOf = new Map(orders.map((o) => [o.id, o.number]));
+    const it = await db.from("fittings_order_items").select("id, order_id, product_id, name, part_number, qty").in("order_id", ids);
+    const items: PickOrderItem[] = ((it.error ? [] : (it.data ?? [])) as Array<Omit<PickOrderItem, "order_number">>).map((r) => ({ ...r, id: Number(r.id), order_number: numberOf.get(r.order_id) ?? 0 }));
+    const ordered = [...new Set(items.map((i) => i.product_id))];
+    const kits = ordered.length ? await db.from("fittings_kit_items").select("kit_id, product_id, qty").in("kit_id", ordered) : { data: [], error: null };
+    const kitItems = (kits.error ? [] : (kits.data ?? [])) as PickKitItem[];
+    const wanted = [...new Set([...ordered, ...kitItems.map((k) => k.product_id)])];
+    let products: PickProduct[] = [];
+    if (wanted.length) {
+      const p = await db.from("fittings_products").select("id, name, part_number, spot_id").in("id", wanted);
+      if (p.error) {
+        const q = await db.from("fittings_products").select("id, name, part_number").in("id", wanted);
+        products = ((q.data ?? []) as Array<Omit<PickProduct, "spot_id">>).map((r) => ({ ...r, spot_id: null }));
+      } else products = (p.data ?? []) as PickProduct[];
+    }
+    const itemIds = items.map((i) => i.id);
+    const mk = itemIds.length ? await db.from("fittings_pick_marks").select("order_item_id, product_id, picked_qty").in("order_item_id", itemIds) : { data: [], error: null };
+    const marks = (mk.error ? [] : (mk.data ?? [])) as PickMark[];
+    for (const part of expandParts(items, products, kitItems, marks)) {
+      const row = (progress[part.order_id] ??= { need: 0, picked: 0 });
+      row.need += part.qty;
+      row.picked += part.picked_qty;
+    }
+  }
+
+  const sales: SaleRow[] = [];
+  for (const o of (web.error ? [] : (web.data ?? [])) as Array<Record<string, unknown>>) {
+    if (typeof o.paid_at !== "string") continue;
+    sales.push({ at: o.paid_at, cents: Number(o.subtotal_cents ?? 0), kind: "web", refunded: Number(o.refunded_cents ?? 0) });
+  }
+  for (const c of (counter.error ? [] : (counter.data ?? [])) as Array<Record<string, unknown>>) {
+    if (typeof c.created_at === "string") sales.push({ at: c.created_at, cents: Number(c.total_cents ?? 0), kind: "counter" });
+  }
+  return { progress, low, sales, capped: (web.data?.length ?? 0) >= CAP || (counter.data?.length ?? 0) >= CAP };
 }
 
 /** Runs an operations action; undefined when the action isn't one of these. */
@@ -263,6 +321,10 @@ export async function runOps(action: string, a: Payload, db: SupabaseClient): Pr
     // Running low ---------------------------------------------------------------------------------
     case "lowstock.load":
       return { lines: await loadRunningLow(db) };
+
+    // Home: what the dashboard needs beyond the store data already loaded ------------------------
+    case "home.load":
+      return await loadHome(db);
 
     case "lowstock.send": {
       const queued = await queueLowStock(db);

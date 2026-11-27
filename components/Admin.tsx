@@ -6,6 +6,7 @@ import type { ActionReply, AdminData } from "@/lib/admin-types";
 import { HOME_TAB, NAV_GROUPS, TAB_NAMES, groupOf, groupTarget, tabFromHash, type Tab } from "@/lib/admin-nav";
 import Alerts from "./admin/Alerts";
 import Counter from "./admin/Counter";
+import Home from "./admin/Home";
 import Hoses from "./admin/Hoses";
 import Inventory from "./admin/Inventory";
 import Locations from "./admin/Locations";
@@ -119,9 +120,9 @@ export default function Admin() {
     <>
       <header className="top admin-top">
         <div className="wrap">
-          <Link className="brand" href="/admin">
+          <a className="brand" href="#home">
             Back office
-          </Link>
+          </a>
           <div className="nav-util">
             <Link href="/">View shop</Link>
             <button type="button" className="tab" onClick={signOut}>
@@ -173,6 +174,7 @@ export default function Admin() {
             {loadError}
           </p>
         )}
+        {data && tab === "home" && <Home data={data} act={act} go={go} reload={reload} />}
         {data && tab === "inventory" && <Inventory data={data} act={act} say={say} reload={reload} />}
         {data && tab === "counter" && <Counter data={data} act={act} say={say} />}
         {data && tab === "alerts" && <Alerts data={data} act={act} say={say} />}
