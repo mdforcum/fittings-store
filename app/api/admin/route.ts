@@ -233,7 +233,14 @@ async function run(action: string, a: Payload, db: SupabaseClient, origin: strin
       if (clash.data) newId = `${newId}-${Math.random().toString(36).slice(2, 6)}`;
       const top = await db.from(T.products).select("sort").order("sort", { ascending: false }).limit(1);
       const sort = ((top.data?.[0]?.sort as number | undefined) ?? 0) + 10;
-      await must(db.from(T.products).insert({ id: newId, qty: 0, ...fields, sort }));
+      // Starting stock goes to the location staff are working at, when they picked one.
+      const startAt = isId(a.location_id) ? (a.location_id as string) : null;
+      const startQty = typeof fields.qty === "number" ? fields.qty : 0;
+      await must(db.from(T.products).insert({ id: newId, ...fields, qty: startAt ? 0 : startQty, sort }));
+      if (startAt && startQty > 0) {
+        const r = await db.rpc("fittings_count_qty", { p_id: newId, p_qty: startQty, p_note: "New item", p_location: startAt });
+        if (r.error) fail(`The item was added, but its count wasn't saved: ${r.error.message}`);
+      }
       await placeByType(db, newId, String(fields.type ?? "other"));
       return { id: newId };
     }
@@ -284,6 +291,29 @@ async function run(action: string, a: Payload, db: SupabaseClient, origin: strin
       const r = await db.rpc("fittings_transfer", { p_id: id, p_from: a.from, p_to: a.to, p_qty: n, p_note: str(a.note, 200) });
       if (r.error) fail(/only \d+ there/.test(r.error.message) ? `Only ${r.error.message.match(/only (\d+)/)![1]} there to move.` : r.error.message);
       return {};
+    }
+
+    case "qty.transfer_many": {
+      // Move several items from one location to another; stops at the first one that can't move.
+      if (!isId(a.from) || !isId(a.to)) fail("Pick where the parts are and where they go.");
+      if (a.from === a.to) fail("Pick two different locations.");
+      const lines = (Array.isArray(a.lines) ? a.lines : [])
+        .map((l: { id?: unknown; qty?: unknown }) => ({ id: typeof l?.id === "string" ? l.id : "", qty: int(l?.qty) ?? 0 }))
+        .filter((l: { id: string; qty: number }) => l.id && l.qty > 0);
+      if (lines.length === 0) fail("Add at least one item and how many to move.");
+      if (lines.length > 500) fail("Move up to 500 items at a time.");
+      const note = str(a.note, 200);
+      let moved = 0;
+      for (const l of lines) {
+        const r = await db.rpc("fittings_transfer", { p_id: l.id, p_from: a.from, p_to: a.to, p_qty: l.qty, p_note: note });
+        if (r.error) {
+          const name = (await db.from(T.products).select("name").eq("id", l.id).maybeSingle()).data?.name ?? l.id;
+          const only = r.error.message.match(/only (\d+)/)?.[1];
+          fail(`${moved ? `Moved ${moved} of ${lines.length} items, then stopped` : "Nothing moved"}: ${name}${only != null ? ` has only ${only} there` : ` (${r.error.message})`}.`);
+        }
+        moved++;
+      }
+      return { moved };
     }
 
     case "dealer.save": {

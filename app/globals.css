@@ -54,7 +54,7 @@ a { color: inherit; }
 h1 { font: 800 clamp(2.1rem, 7vw, 3.6rem)/.95 var(--display); text-transform: uppercase; letter-spacing: .01em; text-wrap: balance; max-width: 18ch; }
 .sub { color: var(--muted); max-width: 62ch; }
 .finder { display: grid; gap: 12px; margin-top: 8px; }
-input[type="search"], .form input, .form select, .form textarea, .row input, .bulk input, .field {
+input[type="search"], .form input, .form select, .form textarea, .row input, .bulk input, .at-bar select, .field {
   width: 100%; padding: 10px 12px; border: 1px solid var(--rule); border-radius: 3px; background: var(--surface); color: var(--ink);
 }
 input[type="search"] { max-width: 440px; }
@@ -498,3 +498,12 @@ dialog.sheet { margin: 0 0 0 auto; width: min(440px, 100%); max-width: 100%; hei
 .sf-form { margin-top: 6px; }
 .sf-color { display: grid; grid-template-columns: 48px 1fr; gap: 8px; }
 .sf-color input[type="color"] { width: 48px; height: 48px; padding: 2px; border: 1px solid var(--rule); background: var(--surface); }
+.at-bar { display: grid; grid-template-columns: minmax(0, 360px) auto; gap: 8px 16px; align-items: end; padding: 12px; margin: 8px 0 12px; border: 1px solid var(--rule); background: var(--sunken); }
+.at-bar label[for="inv-at"] { display: grid; gap: 4px; font-weight: 600; }
+.at-bar .hint { grid-column: 1 / -1; margin: 0; }
+.at-only { grid-column: 1 / -1; display: inline-flex; align-items: center; gap: 8px; min-height: 48px; font-weight: 500; }
+.at-only input { width: 22px; height: 22px; }
+@media (max-width: 560px) { .at-bar { grid-template-columns: 1fr; } }
+.ms-lines { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+.ms-lines li { display: grid; grid-template-columns: 1fr 96px auto; gap: 8px; align-items: end; }
+.ms-lines label { display: grid; gap: 4px; }

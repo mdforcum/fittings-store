@@ -102,13 +102,14 @@ function DealerBlock({ dealer, data, act, say }: { dealer: Dealer; data: AdminDa
   );
 }
 
-function LocationForm({
+export function LocationForm({
   dealerId,
   loc,
   isDefault,
   act,
   say,
   onDone,
+  onSaved,
 }: {
   dealerId: string;
   loc?: StoreLocation;
@@ -116,6 +117,8 @@ function LocationForm({
   act: Act;
   say: Say;
   onDone?: () => void;
+  /** Called with the saved location's id. */
+  onSaved?: (id: string) => void;
 }) {
   const key = loc?.id ?? "new";
   const [f, setF] = useState({
@@ -142,6 +145,7 @@ function LocationForm({
     setBusy(false);
     if (done) {
       say(loc ? `${f.name.trim()} saved` : `Added ${f.name.trim()}`);
+      if (typeof done.location_id === "string") onSaved?.(done.location_id);
       onDone?.();
     }
   }

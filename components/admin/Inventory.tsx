@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import type { AdminData, Cost, StockMove } from "@/lib/admin-types";
 import { NO_PLACES, countsLine, type Places } from "@/lib/places";
+import { LocationForm } from "./Locations";
 import {
   TYPES,
   adminStatus,
@@ -30,6 +31,33 @@ export default function Inventory({ data, act, say, reload }: Props) {
   const [editing, setEditing] = useState<string | null>(null); // product id, "new", or null
   const [stockOf, setStockOf] = useState<string | null>(null); // product id whose stock history is open
   const [bulk, setBulk] = useState("");
+  const places = data.places ?? NO_PLACES;
+  // The location staff are working at: counts, − and +, and new items apply there.
+  const [atPick, setAtPick] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => {
+      try {
+        setAtPick(window.localStorage.getItem(AT_KEY) ?? "");
+      } catch {
+        /* storage blocked: start at totals */
+      }
+    }, 0);
+    return () => clearTimeout(t);
+  }, []);
+  const at = places.locations.some((l) => l.id === atPick) ? atPick : "";
+  const pickAt = (id: string) => {
+    setAtPick(id);
+    try {
+      window.localStorage.setItem(AT_KEY, id);
+    } catch {
+      /* storage blocked: the pick lasts until reload */
+    }
+  };
+  const [onlyHere, setOnlyHere] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [moving, setMoving] = useState(false);
+  const here = places.locations.find((l) => l.id === at);
+  const qtyOf = (p: Product) => (at ? (places.onhand[p.id]?.[at] ?? 0) : p.qty);
 
   const counts: Record<Filter, number> = { all: data.products.length, live: 0, out: 0, noprice: 0 };
   let atCost = 0;
@@ -39,15 +67,16 @@ export default function Inventory({ data, act, say, reload }: Props) {
     counts[adminStatus(p).key]++;
     const c = data.costs[p.id]?.cost_cents ?? 0;
     if (c > 0) {
-      atCost += c * p.qty;
+      atCost += c * qtyOf(p);
       costed++;
     }
-    atRetail += (p.price_cents ?? 0) * p.qty;
+    atRetail += (p.price_cents ?? 0) * qtyOf(p);
   }
 
   const needle = q.trim().toLowerCase();
   const shown = data.products.filter((p) => {
     if (filter !== "all" && adminStatus(p).key !== filter) return false;
+    if (at && onlyHere && !(qtyOf(p) > 0)) return false;
     return !needle || [p.name, p.part_number, p.thread, p.size, p.dash].join(" ").toLowerCase().includes(needle);
   });
 
@@ -77,8 +106,52 @@ export default function Inventory({ data, act, say, reload }: Props) {
           Add item
         </button>
       </div>
+      {places.ready && (
+        <div className="at-bar">
+          <label htmlFor="inv-at">
+            Working at
+            <select id="inv-at" value={at} onChange={(e) => pickAt(e.target.value)}>
+              <option value="">All locations (totals)</option>
+              {places.dealers.map((d) => {
+                const locs = places.locations.filter((l) => l.dealer_id === d.id);
+                return locs.length ? (
+                  <optgroup key={d.id} label={d.name}>
+                    {locs.map((l) => (
+                      <option key={l.id} value={l.id}>
+                        {l.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                ) : null;
+              })}
+            </select>
+          </label>
+          <div className="inline">
+            <button type="button" className="btn ghost sm" onClick={() => setAdding(true)}>
+              Add location
+            </button>
+            {places.locations.length > 1 && (
+              <button type="button" className="btn ghost sm" onClick={() => setMoving(true)}>
+                Move stock
+              </button>
+            )}
+          </div>
+          <p className="hint">
+            {here
+              ? `Counts, − and +, and new items below are for ${here.name}.`
+              : places.locations.length > 1
+                ? "Totals across all locations. Pick a location to enter or change its counts."
+                : "Counts are for your one location. Add a location to keep stock in more than one place."}
+          </p>
+          {here && (
+            <label className="at-only">
+              <input type="checkbox" checked={onlyHere} onChange={(e) => setOnlyHere(e.target.checked)} /> Only items stocked at {here.name}
+            </label>
+          )}
+        </div>
+      )}
       <p className="sub">
-        On the shelf: {money(atCost)} at cost ({costed} of {data.products.length} items costed), {money(atRetail)} at
+        {here ? `At ${here.name}` : "On the shelf"}: {money(atCost)} at cost ({costed} of {data.products.length} items costed), {money(atRetail)} at
         sell price.
       </p>
 
@@ -141,7 +214,8 @@ export default function Inventory({ data, act, say, reload }: Props) {
             p={p}
             cost={data.costs[p.id]}
             held={data.held?.[p.id] ?? 0}
-            places={data.places ?? NO_PLACES}
+            places={places}
+            at={at}
             act={act}
             say={say}
             onEdit={() => setEditing(p.id)}
@@ -155,6 +229,19 @@ export default function Inventory({ data, act, say, reload }: Props) {
         </p>
       )}
 
+      {adding && (
+        <AddLocation
+          places={places}
+          act={act}
+          say={say}
+          onClose={() => setAdding(false)}
+          onSaved={(id) => {
+            setAdding(false);
+            pickAt(id);
+          }}
+        />
+      )}
+      {moving && <MoveStock products={data.products} places={places} from={at} act={act} say={say} onClose={() => setMoving(false)} />}
       {stockOf && data.products.some((p) => p.id === stockOf) && (
         <StockHistory
           key={stockOf}
@@ -169,6 +256,8 @@ export default function Inventory({ data, act, say, reload }: Props) {
       {editing && (
         <ItemEditor
           key={editing}
+          locationId={at || null}
+          locationName={places.locations.length > 1 ? (here?.name ?? null) : null}
           product={editingProduct}
           act={act}
           say={say}
@@ -186,6 +275,7 @@ function Row({
   cost,
   held,
   places,
+  at,
   act,
   say,
   onEdit,
@@ -195,13 +285,19 @@ function Row({
   cost: Cost | undefined;
   held: number;
   places: Places;
+  /** The location being worked at, or "" for totals. */
+  at: string;
   act: Act;
   say: Say;
   onEdit: () => void;
   onStock: () => void;
 }) {
   const many = places.locations.length > 1;
-  const home = places.locations.find((l) => l.id === places.default_location_id) ?? places.locations[0];
+  const here = places.locations.find((l) => l.id === at);
+  // With several locations and none picked, the number is a total and can't be typed over.
+  const locked = many && !here;
+  const shownQty = here ? (places.onhand[p.id]?.[here.id] ?? 0) : p.qty;
+  const where = here ? { location_id: here.id } : {};
   const c = cost?.cost_cents ?? null;
   const price = p.price_cents;
   const shownMargin = c && c > 0 && price && price > 0 ? marginFrom(c, price) : (cost?.margin ?? null);
@@ -210,10 +306,10 @@ function Row({
   function saveQty(e: React.FocusEvent<HTMLInputElement>) {
     const n = Number(e.target.value.trim());
     if (e.target.value.trim() === "" || !Number.isInteger(n) || n < 0) {
-      e.target.value = String(p.qty);
+      e.target.value = String(shownQty);
       return say("Quantity must be a whole number, 0 or more.", true);
     }
-    if (n !== p.qty) act("qty.count", { id: p.id, qty: n });
+    if (n !== shownQty) act("qty.count", { id: p.id, qty: n, ...where });
   }
 
   async function saveCost(e: React.FocusEvent<HTMLInputElement>) {
@@ -278,35 +374,44 @@ function Row({
         </div>
       </div>
       <div className="r-qty">
-        <span className="lbl">On hand</span>
+        <span className="lbl">{here ? `At ${here.code || here.name}` : many ? "Total" : "On hand"}</span>
         <div className="stepper">
           <button
             type="button"
-            aria-label={`Subtract one ${p.name}`}
-            disabled={p.qty <= 0}
-            onClick={() => act("qty.adjust", { id: p.id, delta: -1 })}
+            aria-label={`Subtract one ${p.name}${here ? ` at ${here.name}` : ""}`}
+            disabled={locked || shownQty <= 0}
+            onClick={() => act("qty.adjust", { id: p.id, delta: -1, ...where })}
           >
             −
           </button>
           <input
-            key={`qty-${p.qty}`}
+            key={`qty-${at}-${shownQty}`}
             id={`qty-${p.id}`}
             inputMode="numeric"
             autoComplete="off"
-            aria-label={many ? `Total on hand at all locations, ${p.name}. Recount a location in Stock.` : `Quantity on hand, ${p.name}`}
-            defaultValue={p.qty}
-            readOnly={many}
-            onBlur={many ? undefined : saveQty}
+            aria-label={
+              locked
+                ? `Total on hand at all locations, ${p.name}. Pick a location above to change it.`
+                : `Quantity on hand${here ? ` at ${here.name}` : ""}, ${p.name}`
+            }
+            defaultValue={shownQty}
+            readOnly={locked}
+            onBlur={locked ? undefined : saveQty}
             onKeyDown={blurOnEnter}
           />
-          <button type="button" aria-label={`Add one ${p.name}`} onClick={() => act("qty.adjust", { id: p.id, delta: 1 })}>
+          <button
+            type="button"
+            aria-label={`Add one ${p.name}${here ? ` at ${here.name}` : ""}`}
+            disabled={locked}
+            onClick={() => act("qty.adjust", { id: p.id, delta: 1, ...where })}
+          >
             +
           </button>
         </div>
         {many && (
           <span className="where-note">
+            {here ? `${p.qty} in all · ` : ""}
             {countsLine(places.onhand[p.id], places.locations) || "None at any location"}
-            {home ? ` · − and + change ${home.code || home.name}` : ""}
           </span>
         )}
         {held > 0 && (
@@ -380,6 +485,8 @@ async function shrink(file: File): Promise<Blob> {
 
 function ItemEditor({
   product,
+  locationId,
+  locationName,
   act,
   say,
   reload,
@@ -387,6 +494,10 @@ function ItemEditor({
   onCreated,
 }: {
   product: Product | undefined;
+  /** Where a new item's starting count goes; null for the default location. */
+  locationId: string | null;
+  /** Shown beside the count when there are several locations. */
+  locationName: string | null;
   act: Act;
   say: Say;
   reload: () => Promise<void>;
@@ -436,7 +547,7 @@ function ItemEditor({
       setBusy(false);
       return say("Quantity must be a whole number, 0 or more.", true);
     }
-    const done = await act("product.create", { fields: { ...fields, qty } });
+    const done = await act("product.create", { fields: { ...fields, qty }, ...(locationId ? { location_id: locationId } : {}) });
     setBusy(false);
     if (done && typeof done.id === "string") {
       say("Item added. Add photos now, then set its cost and price in the list.");
@@ -542,7 +653,7 @@ function ItemEditor({
         </div>
         {!product && (
           <label htmlFor="f-qty">
-            Quantity on hand
+            {locationName ? `Quantity on hand at ${locationName}` : "Quantity on hand"}
             <input id="f-qty" inputMode="numeric" autoComplete="off" placeholder="0" value={f.qty} onChange={set("qty")} />
           </label>
         )}
@@ -858,6 +969,211 @@ function StockHistory({
           ))}
         </ol>
       )}
+    </Modal>
+  );
+}
+
+const AT_KEY = "inv-location";
+
+/** Add a store location for any dealer, from the inventory screen. */
+function AddLocation({
+  places,
+  act,
+  say,
+  onClose,
+  onSaved,
+}: {
+  places: Places;
+  act: Act;
+  say: Say;
+  onClose: () => void;
+  onSaved: (id: string) => void;
+}) {
+  const [dealer, setDealer] = useState(places.dealers[0]?.id ?? "");
+  return (
+    <Modal open onClose={onClose} title="Add a location">
+      <div className="form">
+        <label htmlFor="al-dealer">
+          Whose location
+          <select id="al-dealer" value={dealer} onChange={(e) => setDealer(e.target.value)}>
+            {places.dealers.map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      {dealer ? (
+        <LocationForm key={dealer} dealerId={dealer} isDefault={false} act={act} say={say} onDone={onClose} onSaved={onSaved} />
+      ) : (
+        <p className="hint">Add a dealer in Settings first.</p>
+      )}
+      <p className="hint">Dealers, their branded stores and location details are in Settings.</p>
+    </Modal>
+  );
+}
+
+type MoveLine = { key: number; id: string; qty: string };
+
+/** Move parts from one location to another: a few items, or everything at a location. */
+function MoveStock({
+  products,
+  places,
+  from: startFrom,
+  act,
+  say,
+  onClose,
+}: {
+  products: Product[];
+  places: Places;
+  from: string;
+  act: Act;
+  say: Say;
+  onClose: () => void;
+}) {
+  const [from, setFrom] = useState(startFrom);
+  const [to, setTo] = useState("");
+  const [note, setNote] = useState("");
+  const [lines, setLines] = useState<MoveLine[]>([{ key: 1, id: "", qty: "" }]);
+  const [next, setNext] = useState(2);
+  const [busy, setBusy] = useState(false);
+  const there = (id: string) => (from ? (places.onhand[id]?.[from] ?? 0) : 0);
+  const stocked = products.filter((p) => there(p.id) > 0).sort((a, b) => a.name.localeCompare(b.name));
+  const name = (id: string) => places.locations.find((l) => l.id === id)?.name ?? "";
+  const setLine = (key: number, patch: Partial<MoveLine>) => setLines(lines.map((l) => (l.key === key ? { ...l, ...patch } : l)));
+
+  function everything() {
+    if (!from) return say("Pick where the parts are first.", true);
+    if (!stocked.length) return say(`Nothing is stocked at ${name(from)}.`, true);
+    let k = next;
+    setLines(stocked.map((p) => ({ key: k++, id: p.id, qty: String(there(p.id)) })));
+    setNext(k);
+  }
+
+  async function move(e: React.FormEvent) {
+    e.preventDefault();
+    if (!from || !to) return say("Pick where the parts are and where they go.", true);
+    if (from === to) return say("Pick two different locations.", true);
+    const out: Array<{ id: string; qty: number }> = [];
+    for (const l of lines) {
+      if (!l.id && !l.qty.trim()) continue;
+      const n = Number(l.qty.trim());
+      const p = products.find((x) => x.id === l.id);
+      if (!p) return say("Pick an item on every line, or remove the empty line.", true);
+      if (!Number.isInteger(n) || n < 1) return say(`Enter how many ${p.name} to move, 1 or more.`, true);
+      if (n > there(p.id)) return say(`${name(from)} has only ${there(p.id)} ${p.name}.`, true);
+      out.push({ id: p.id, qty: n });
+    }
+    if (!out.length) return say("Add at least one item to move.", true);
+    setBusy(true);
+    const done = await act("qty.transfer_many", { from, to, lines: out, note });
+    setBusy(false);
+    if (done) {
+      const units = out.reduce((n, l) => n + l.qty, 0);
+      say(`Moved ${units} part${units === 1 ? "" : "s"} (${out.length} item${out.length === 1 ? "" : "s"}) from ${name(from)} to ${name(to)}`);
+      onClose();
+    }
+  }
+
+  const locOptions = places.dealers.map((d) => {
+    const locs = places.locations.filter((l) => l.dealer_id === d.id);
+    return locs.length ? (
+      <optgroup key={d.id} label={d.name}>
+        {locs.map((l) => (
+          <option key={l.id} value={l.id}>
+            {l.name}
+          </option>
+        ))}
+      </optgroup>
+    ) : null;
+  });
+
+  return (
+    <Modal open onClose={onClose} title="Move stock">
+      <form className="form" onSubmit={move}>
+        <div className="two">
+          <label htmlFor="ms-from">
+            From
+            <select
+              id="ms-from"
+              value={from}
+              onChange={(e) => {
+                setFrom(e.target.value);
+                setLines([{ key: next, id: "", qty: "" }]);
+                setNext(next + 1);
+              }}
+            >
+              <option value="">Pick one</option>
+              {locOptions}
+            </select>
+          </label>
+          <label htmlFor="ms-to">
+            To
+            <select id="ms-to" value={to} onChange={(e) => setTo(e.target.value)}>
+              <option value="">Pick one</option>
+              {locOptions}
+            </select>
+          </label>
+        </div>
+        {from && (
+          <>
+            <ul className="ms-lines">
+              {lines.map((l, i) => (
+                <li key={l.key}>
+                  <label htmlFor={`ms-item-${l.key}`}>
+                    <span className={i ? "sr" : undefined}>Item</span>
+                    <select id={`ms-item-${l.key}`} value={l.id} onChange={(e) => setLine(l.key, { id: e.target.value })}>
+                      <option value="">Pick an item</option>
+                      {stocked.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                          {p.part_number ? ` · ${p.part_number}` : ""} ({there(p.id)} there)
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label htmlFor={`ms-qty-${l.key}`}>
+                    <span className={i ? "sr" : undefined}>How many</span>
+                    <input id={`ms-qty-${l.key}`} inputMode="numeric" autoComplete="off" value={l.qty} onChange={(e) => setLine(l.key, { qty: e.target.value })} />
+                  </label>
+                  <button
+                    type="button"
+                    className="btn ghost sm"
+                    aria-label={`Remove line ${i + 1}`}
+                    onClick={() => setLines(lines.length > 1 ? lines.filter((x) => x.key !== l.key) : [{ key: l.key, id: "", qty: "" }])}
+                  >
+                    Remove
+                  </button>
+                </li>
+              ))}
+            </ul>
+            {stocked.length === 0 && <p className="hint">Nothing is stocked at {name(from)} yet.</p>}
+            <div className="inline">
+              <button
+                type="button"
+                className="btn ghost sm"
+                onClick={() => {
+                  setLines([...lines, { key: next, id: "", qty: "" }]);
+                  setNext(next + 1);
+                }}
+              >
+                Add another item
+              </button>
+              <button type="button" className="btn ghost sm" onClick={everything}>
+                Move everything at {name(from)}
+              </button>
+            </div>
+          </>
+        )}
+        <label htmlFor="ms-note">
+          Note (optional)
+          <input id="ms-note" maxLength={200} autoComplete="off" placeholder="Truck run, restock, new store" value={note} onChange={(e) => setNote(e.target.value)} />
+        </label>
+        <button type="submit" className="btn" disabled={busy}>
+          {busy ? "Moving…" : "Move stock"}
+        </button>
+      </form>
     </Modal>
   );
 }
