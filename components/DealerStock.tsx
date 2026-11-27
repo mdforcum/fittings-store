@@ -6,7 +6,9 @@
 import { useEffect, useMemo, useState } from "react";
 import type { PortalData, PortalStock } from "@/app/api/dealer/route";
 import { money } from "@/lib/catalog";
+import { EMPTY_INDEX, smartSearch, type LookupBin, type LookupIndex, type PhotoRead } from "@/lib/lookup";
 import { IMPORT_LIMIT, dealerCountLines, importPlan, parseCsv } from "@/lib/operations";
+import PartFinder from "./PartFinder";
 
 type Reply = { ok: boolean; message?: string; result?: Record<string, unknown> };
 type Call = (body: Record<string, unknown>) => Promise<Reply>;
@@ -17,6 +19,9 @@ export default function DealerStock({ locations, supportEmail, call }: { locatio
   const [stock, setStock] = useState<PortalStock | null>(null);
   const [loc, setLoc] = useState(locations[0]?.id ?? "");
   const [q, setQ] = useState("");
+  const [index, setIndex] = useState<LookupIndex>(EMPTY_INDEX);
+  const [bin, setBin] = useState<LookupBin | null>(null);
+  const [picked, setPicked] = useState("");
   const [typed, setTyped] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState("");
   const [note, setNote] = useState<{ text: string; bad: boolean } | null>(null);
@@ -31,6 +36,9 @@ export default function DealerStock({ locations, supportEmail, call }: { locatio
       if (r.ok && r.result?.stock) setStock(r.result.stock as PortalStock);
       else setNote({ text: r.message ?? "Your stock could not be loaded. Try again.", bad: true });
     });
+    call({ action: "lookup.index" }).then((r) => {
+      if (live && r.ok && r.result?.index) setIndex(r.result.index as LookupIndex);
+    });
     return () => {
       live = false;
     };
@@ -41,10 +49,15 @@ export default function DealerStock({ locations, supportEmail, call }: { locatio
   const list = useMemo(() => {
     if (!stock) return [];
     const has = (id: string) => stock.onhand[id]?.[loc] !== undefined;
-    const hit = (p: PortalStock["products"][number]) => p.name.toLowerCase().includes(needle) || p.part_number.toLowerCase().includes(needle);
-    // With no search: what's on this shelf. With a search: anything in the catalog that matches.
-    return stock.products.filter((p) => (needle ? hit(p) : has(p.id))).sort((a, b) => Number(has(b.id)) - Number(has(a.id)));
-  }, [stock, loc, needle]);
+    const byId = new Map(stock.products.map((p) => [p.id, p]));
+    const these = (ids: string[]) => ids.map((id) => byId.get(id)).filter((p): p is PortalStock["products"][number] => !!p);
+    // A scanned bin: every part kept in it. A scanned or picked part: that part.
+    if (bin) return these(bin.product_ids);
+    if (picked && !needle) return these([picked]);
+    // A search: the best matches anywhere in the catalog. Otherwise: what's on this shelf.
+    if (needle) return these(smartSearch(needle, stock.products, index, (id) => stock.onhand[id]?.[loc], 60).map((f) => f.id));
+    return stock.products.filter((p) => has(p.id));
+  }, [stock, loc, needle, index, bin, picked]);
   const low = (stock?.low ?? []).filter((l) => l.location_id === loc);
   const locName = locations.find((l) => l.id === loc)?.name ?? "";
 
@@ -148,10 +161,45 @@ export default function DealerStock({ locations, supportEmail, call }: { locatio
         </details>
       )}
 
-      <label className="ds-field" htmlFor="ds-q">
-        Find a part
-        <input id="ds-q" type="search" autoComplete="off" placeholder="Part number or name" value={q} onChange={(e) => setQ(e.target.value)} />
-      </label>
+      <PartFinder
+        parts={stock.products}
+        index={index}
+        shelf={onShelf}
+        results={false}
+        label="Find a part"
+        inputId="ds-q"
+        onQuery={(v) => {
+          setQ(v);
+          if (v) {
+            setBin(null);
+            setPicked("");
+          }
+        }}
+        onBin={(b) => {
+          setBin(b);
+          setPicked("");
+        }}
+        onPick={(id) => {
+          setPicked(id);
+          setBin(null);
+        }}
+        photo={async (image, type) => {
+          const r = await call({ action: "lookup.photo", image, type });
+          return r.ok ? { read: r.result?.read as PhotoRead } : { problem: r.message };
+        }}
+      />
+      {(bin || picked) && (
+        <button
+          type="button"
+          className="btn ghost"
+          onClick={() => {
+            setBin(null);
+            setPicked("");
+          }}
+        >
+          Show my whole shelf
+        </button>
+      )}
       {list.length === 0 ? (
         <p className="empty">{needle ? "No part matches. If it's missing from the catalog, email Backroad Iron to add it." : "Nothing is on this shelf yet. Search for a part to give it a count."}</p>
       ) : (

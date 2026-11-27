@@ -5,6 +5,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { TYPE_CATEGORY } from "./foundation";
 import { counterLines, IMPORT_LIMIT, okEmail, refundFor, runningLow, stillOut, toE164, type LowLine } from "./operations";
 import { LABELS_KEY, MAX_FLAT_CENTS, MAX_MARKUP_BPS, readLabels } from "./labels";
+import { buildIndex, linkUpc, readPartPhoto } from "./lookup-server";
 import { hashPassword, passwordProblem } from "./passwords";
 import { env, setConfig } from "./server";
 import { refundLabel, type RefundStatus } from "./shippo";
@@ -273,6 +274,22 @@ export async function runOps(action: string, a: Payload, db: SupabaseClient): Pr
       const r = await db.from("fittings_dealer_users").update({ disabled: a.disabled !== false }).eq("id", a.user_id as string);
       if (r.error) fail(r.error.message);
       return {};
+    }
+
+    // Part finder: scan, search, photo ------------------------------------------------------------
+    case "lookup.index":
+      return { index: await buildIndex(db, { supplier: true }) };
+
+    case "lookup.photo": {
+      const r = await readPartPhoto(a.image, a.type);
+      if ("problem" in r) fail(r.problem);
+      return r as { read: unknown };
+    }
+
+    case "upc.link": {
+      const problem = await linkUpc(db, str(a.product_id, 80), str(a.code, 20));
+      if (problem) fail(problem);
+      return { index: await buildIndex(db, { supplier: true }) };
     }
 
     // Dealer shipping labels ------------------------------------------------------------------------

@@ -5,6 +5,7 @@ import { currentDealer, dealerSignIn, dealerSignOut, type DealerSession } from "
 import type { ShipFrom } from "@/lib/admin-types";
 import { LABELS_KEY, QUOTE_MINUTES, labelCharge, packageGuess, parcelFrom, quoteKey, readLabels, readQuote, signQuote, type PartShipping } from "@/lib/labels";
 import { IMPORT_LIMIT, locationShipFrom, runningLow, type LowLine } from "@/lib/operations";
+import { buildIndex, readPartPhoto } from "@/lib/lookup-server";
 import { onhandMap } from "@/lib/places";
 import { normalizeLocation } from "@/lib/places";
 import { monthOf, monthRange, readSettlement } from "@/lib/settlements";
@@ -209,6 +210,15 @@ async function loadStock(db: SupabaseClient, s: DealerSession): Promise<PortalSt
 }
 
 async function run(action: string, a: Payload, db: SupabaseClient, s: DealerSession): Promise<Response | null> {
+  // Part finder: the dealer's own bins and sales, and no supplier numbers.
+  if (action === "lookup.index") {
+    return json({ ok: true, result: { index: await buildIndex(db, { supplier: false, locations: (await myLocations(db, s)).map((l) => l.id) }) } });
+  }
+  if (action === "lookup.photo") {
+    const r = await readPartPhoto(a.image, a.type);
+    return "problem" in r ? bad(r.problem) : json({ ok: true, result: r });
+  }
+
   // The dealer's own shelves -------------------------------------------------------------
   if (action === "stock.load") return json({ ok: true, result: { stock: await loadStock(db, s) } });
 

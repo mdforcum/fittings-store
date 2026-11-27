@@ -4,8 +4,10 @@
 import { useEffect, useState } from "react";
 import type { AdminData } from "@/lib/admin-types";
 import { money } from "@/lib/catalog";
+import { EMPTY_INDEX, type LookupIndex, type PhotoRead } from "@/lib/lookup";
 import { counterLines, counterTotal, counterWarnings } from "@/lib/operations";
 import type { Act, Say } from "../Admin";
+import PartFinder, { GoesWith } from "../PartFinder";
 
 type Props = { data: AdminData; act: Act; say: Say };
 type Line = { key: number; product_id: string; qty: string; price: string };
@@ -21,7 +23,8 @@ export default function Counter({ data, act, say }: Props) {
   const places = data.places;
   const stores = places.locations.filter((l) => l.active);
   const [loc, setLoc] = useState("");
-  const [q, setQ] = useState("");
+  const [index, setIndex] = useState<LookupIndex>(EMPTY_INDEX);
+  const [last, setLast] = useState("");
   const [lines, setLines] = useState<Line[]>([]);
   const [next, setNext] = useState(1);
   const [paidBy, setPaidBy] = useState("cash");
@@ -47,6 +50,9 @@ export default function Counter({ data, act, say }: Props) {
   useEffect(() => {
     if (!data.ops?.ready) return;
     let live = true;
+    act("lookup.index").then((r) => {
+      if (live && r?.index) setIndex(r.index as LookupIndex);
+    });
     act("counter.list").then((r) => {
       if (live && r) setSales((r.sales as Sale[]) ?? []);
     });
@@ -66,13 +72,10 @@ export default function Counter({ data, act, say }: Props) {
 
   const onShelf = (id: string) => places.onhand[id]?.[loc] ?? 0;
   const product = (id: string) => data.products.find((p) => p.id === id);
-  const needle = q.trim().toLowerCase();
-  const matches = needle
-    ? data.products
-        .filter((p) => p.name.toLowerCase().includes(needle) || p.part_number.toLowerCase().includes(needle) || p.id.includes(needle))
-        .sort((a, b) => onShelf(b.id) - onShelf(a.id))
-        .slice(0, 8)
-    : [];
+  const meta = (id: string) => {
+    const p = product(id);
+    return `${onShelf(id)} here · ${p?.price_cents != null ? money(p.price_cents) : "no price"}`;
+  };
   const clean = counterLines(lines.map((l) => ({ product_id: l.product_id, qty: Number.parseInt(l.qty, 10) || 0, price_cents: toCents(l.price) })));
   const total = counterTotal(clean);
   const warnings = counterWarnings(
@@ -97,7 +100,7 @@ export default function Counter({ data, act, say }: Props) {
       setLines([...lines, { key: next, product_id: id, qty: "1", price: p.price_cents != null ? (p.price_cents / 100).toFixed(2) : "" }]);
       setNext(next + 1);
     }
-    setQ("");
+    setLast(id);
   }
 
   async function ring() {
@@ -111,6 +114,7 @@ export default function Counter({ data, act, say }: Props) {
     if (r) {
       say(`Sale #${String(r.sale_id)} rung up: ${money(total)}. The count at ${locName(loc)} is updated.`);
       setLines([]);
+      setLast("");
       setNote("");
       const list = await act("counter.list");
       if (list) setSales((list.sales as Sale[]) ?? []);
@@ -139,29 +143,29 @@ export default function Counter({ data, act, say }: Props) {
             })}
           </select>
         </label>
-        <label htmlFor="ct-q">
-          Add a part
-          <input id="ct-q" type="search" autoComplete="off" placeholder="Part number or name" value={q} onChange={(e) => setQ(e.target.value)} />
-        </label>
       </div>
-      {matches.length > 0 && (
-        <ul className="ct-matches" aria-label="Matching parts">
-          {matches.map((p) => (
-            <li key={p.id}>
-              <button type="button" className="ct-match" onClick={() => add(p.id)}>
-                <span>
-                  {p.part_number && <span className="mono">{p.part_number} </span>}
-                  {p.name}
-                </span>
-                <span className="hint">
-                  {onShelf(p.id)} here · {p.price_cents != null ? money(p.price_cents) : "no price"}
-                </span>
-              </button>
-            </li>
-          ))}
-        </ul>
+      <PartFinder
+        parts={data.products}
+        index={index}
+        shelf={onShelf}
+        onPick={add}
+        meta={meta}
+        label="Add a part"
+        inputId="ct-q"
+        itemClass="ct-match"
+        photo={async (image, type) => {
+          const r = await act("lookup.photo", { image, type });
+          return r ? { read: r.read as PhotoRead } : { problem: "The photo couldn't be read. Type the number instead." };
+        }}
+        onLink={async (code, id) => {
+          const r = await act("upc.link", { product_id: id, code });
+          if (r?.index) setIndex(r.index as LookupIndex);
+          return !!r;
+        }}
+      />
+      {last && lines.some((l) => l.product_id === last) && (
+        <GoesWith id={last} index={index} parts={data.products} skip={new Set(lines.map((l) => l.product_id))} onPick={add} meta={meta} />
       )}
-      {needle && matches.length === 0 && <p className="hint">No parts match.</p>}
 
       {lines.length > 0 && (
         <ul className="ct-lines">
