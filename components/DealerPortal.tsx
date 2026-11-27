@@ -3,7 +3,7 @@
 // to print or check off, "mark shipped" with tracking, and the month's
 // statement. Everything a dealer needs without a back-office login.
 import { useCallback, useEffect, useState } from "react";
-import type { PortalData, PortalOrder } from "@/app/api/dealer/route";
+import type { PortalData, PortalOrder, PortalQuote } from "@/app/api/dealer/route";
 import { money } from "@/lib/catalog";
 import { KIND_LABEL, monthName, monthOf, totals, type SettlementRow } from "@/lib/settlements";
 
@@ -67,11 +67,200 @@ function address(o: PortalOrder): string {
   return [a.name, a.street1, a.street2, [a.city, a.state].filter(Boolean).join(", ") + (a.zip ? ` ${a.zip}` : "")].filter(Boolean).join("\n");
 }
 
-function OrderCard({ o, locations, onShip }: { o: PortalOrder; locations: PortalData["locations"]; onShip: (loc: string, carrier: string, tracking: string, pickup: boolean) => Promise<boolean> }) {
-  const locs = [...new Set(o.lines.map((l) => l.location_id))];
+type Bought = { order: number; carrier: string; tracking_number: string; label_url: string; charge_cents: number; warning?: string };
+type ShipFns = {
+  onShip: (o: PortalOrder, loc: string, carrier: string, tracking: string, pickup: boolean) => Promise<boolean>;
+  onBought: (data: PortalData | undefined, bought: Bought) => void;
+};
+
+/** Opens a saved label again. Label links run out, so a fresh one is fetched each time. */
+function LabelLink({ orderId, loc }: { orderId: string; loc: string }) {
+  const [url, setUrl] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  if (url)
+    return (
+      <a className="btn ghost" href={url} target="_blank" rel="noopener noreferrer">
+        Open label (PDF)
+      </a>
+    );
+  return (
+    <>
+      <button
+        type="button"
+        className="btn ghost"
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          const r = await call({ action: "label.url", order_id: orderId, location_id: loc });
+          setBusy(false);
+          const link = String(r.result?.label_url ?? "");
+          if (r.ok && link.startsWith("https://")) setUrl(link);
+          else setError(r.message ?? "The label could not be opened. Try again.");
+        }}
+      >
+        {busy ? "Getting label…" : "Reprint label"}
+      </button>
+      {error && <p className="err">{error}</p>}
+    </>
+  );
+}
+
+/** One location's part of an order: buy a label here, or type in tracking from the dealer's own carrier account. */
+function ShipStop({ o, loc, labels, onShip, onBought }: { o: PortalOrder; loc: string; labels: boolean } & ShipFns) {
+  const pickup = o.ship_method === "pickup";
+  const [mode, setMode] = useState<"label" | "tracking">(labels && !pickup ? "label" : "tracking");
   const [carrier, setCarrier] = useState("UPS");
-  const [tracking, setTracking] = useState<Record<string, string>>({});
+  const [tracking, setTracking] = useState("");
+  const [box, setBox] = useState({ weight_lb: "", length: "", width: "", height: "" });
+  const [quotes, setQuotes] = useState<PortalQuote[] | null>(null);
+  const [from, setFrom] = useState("");
+  const [pick, setPick] = useState("");
   const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+  const id = `${o.id}-${loc}`;
+  const chosen = quotes?.find((q) => q.token === pick);
+  const setDim = (k: keyof typeof box) => (e: React.ChangeEvent<HTMLInputElement>) => {
+    setBox({ ...box, [k]: e.target.value.replace(/[^\d.]/g, "") });
+    setQuotes(null);
+    setPick("");
+  };
+
+  async function rates(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy("rates");
+    setError("");
+    const r = await call({ action: "label.rates", order_id: o.id, location_id: loc, parcel: box });
+    setBusy("");
+    if (!r.ok) return setError(r.message ?? "Rates could not be loaded. Try again.");
+    const list = (r.result?.quotes as PortalQuote[]) ?? [];
+    setQuotes(list);
+    setFrom(String(r.result?.from ?? ""));
+    setPick(list[0]?.token ?? "");
+  }
+
+  async function buy() {
+    if (!chosen) return;
+    setBusy("buy");
+    setError("");
+    const r = await call({ action: "label.buy", order_id: o.id, location_id: loc, token: chosen.token });
+    setBusy("");
+    if (!r.ok) {
+      setQuotes(null);
+      return setError(r.message ?? "The label could not be bought. Try again.");
+    }
+    onBought(r.data, {
+      order: o.number,
+      carrier: String(r.result?.carrier ?? chosen.carrier),
+      tracking_number: String(r.result?.tracking_number ?? ""),
+      label_url: String(r.result?.label_url ?? ""),
+      charge_cents: Number(r.result?.charge_cents ?? chosen.price_cents),
+      warning: typeof r.result?.warning === "string" ? r.result.warning : undefined,
+    });
+  }
+
+  if (mode === "label") {
+    return (
+      <div className="po-label">
+        <form className="po-box" onSubmit={rates} aria-label={`Package for order ${o.number}`}>
+          <label htmlFor={`w-${id}`}>
+            Weight, lb
+            <input id={`w-${id}`} inputMode="decimal" autoComplete="off" value={box.weight_lb} onChange={setDim("weight_lb")} />
+          </label>
+          <label htmlFor={`l-${id}`}>
+            Length, in
+            <input id={`l-${id}`} inputMode="decimal" autoComplete="off" value={box.length} onChange={setDim("length")} />
+          </label>
+          <label htmlFor={`wd-${id}`}>
+            Width, in
+            <input id={`wd-${id}`} inputMode="decimal" autoComplete="off" value={box.width} onChange={setDim("width")} />
+          </label>
+          <label htmlFor={`h-${id}`}>
+            Height, in
+            <input id={`h-${id}`} inputMode="decimal" autoComplete="off" value={box.height} onChange={setDim("height")} />
+          </label>
+          {!quotes && (
+            <button type="submit" className="btn" disabled={!!busy || !box.weight_lb || !box.length || !box.width || !box.height}>
+              {busy === "rates" ? "Getting rates…" : "Get label rates"}
+            </button>
+          )}
+        </form>
+        {error && (
+          <p className="err" role="alert">
+            {error}
+          </p>
+        )}
+        {quotes && (
+          <fieldset className="po-quotes">
+            <legend>Pick a service</legend>
+            {quotes.map((q) => (
+              <label key={q.token} className="po-quote">
+                <input type="radio" name={`q-${id}`} checked={pick === q.token} onChange={() => setPick(q.token)} />
+                <span>
+                  {q.carrier} {q.service}
+                  {q.days ? <span className="hint"> · about {q.days} day{q.days === 1 ? "" : "s"}</span> : null}
+                </span>
+                <b className="mono">{money(q.price_cents)}</b>
+              </label>
+            ))}
+            <p className="hint">
+              The label price comes off your statement.{from ? ` It ships from ${from}.` : ""}
+            </p>
+            <button type="button" className="btn" disabled={!!busy || !chosen} onClick={buy}>
+              {busy === "buy" ? "Buying label…" : chosen ? `Buy label for ${money(chosen.price_cents)}` : "Buy label"}
+            </button>
+          </fieldset>
+        )}
+        <button type="button" className="btn ghost" onClick={() => setMode("tracking")}>
+          Use my own carrier account instead
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="po-ship">
+        {!pickup && (
+          <>
+            <label>
+              Carrier
+              <select value={carrier} onChange={(e) => setCarrier(e.target.value)}>
+                {["UPS", "FedEx", "USPS", "Freight", "Other"].map((c) => (
+                  <option key={c}>{c}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Tracking number
+              <input value={tracking} onChange={(e) => setTracking(e.target.value)} autoComplete="off" inputMode="text" />
+            </label>
+          </>
+        )}
+        <button
+          type="button"
+          className="btn"
+          disabled={!!busy || (!pickup && !tracking.trim())}
+          onClick={async () => {
+            setBusy("ship");
+            await onShip(o, loc, carrier, tracking, pickup);
+            setBusy("");
+          }}
+        >
+          {busy === "ship" ? "Saving…" : pickup ? "Mark picked up" : "Mark shipped"}
+        </button>
+      </div>
+      {labels && !pickup && (
+        <button type="button" className="btn ghost" onClick={() => setMode("label")}>
+          Buy a label here instead
+        </button>
+      )}
+    </>
+  );
+}
+
+function OrderCard({ o, locations, labels, onShip, onBought }: { o: PortalOrder; locations: PortalData["locations"]; labels: boolean } & ShipFns) {
+  const locs = [...new Set(o.lines.map((l) => l.location_id))];
   const [picked, setPicked] = useState<Record<string, boolean>>({});
   const name = (id: string) => locations.find((l) => l.id === id)?.name ?? "";
   const pickup = o.ship_method === "pickup";
@@ -103,40 +292,14 @@ function OrderCard({ o, locations, onShip }: { o: PortalOrder; locations: Portal
               ))}
             </ul>
             {done ? (
-              <p className="pill ok">
-                {done.carrier === "Picked up" ? "Picked up" : `Shipped ${done.carrier} ${done.tracking_number}`} on {new Date(done.shipped_at).toLocaleDateString("en-US")}
-              </p>
-            ) : (
-              <div className="po-ship">
-                {!pickup && (
-                  <>
-                    <label>
-                      Carrier
-                      <select value={carrier} onChange={(e) => setCarrier(e.target.value)}>
-                        {["UPS", "FedEx", "USPS", "Freight", "Other"].map((c) => (
-                          <option key={c}>{c}</option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      Tracking number
-                      <input value={tracking[loc] ?? ""} onChange={(e) => setTracking({ ...tracking, [loc]: e.target.value })} autoComplete="off" inputMode="text" />
-                    </label>
-                  </>
-                )}
-                <button
-                  type="button"
-                  className="btn"
-                  disabled={!!busy || (!pickup && !(tracking[loc] ?? "").trim())}
-                  onClick={async () => {
-                    setBusy(loc);
-                    await onShip(loc, carrier, tracking[loc] ?? "", pickup);
-                    setBusy("");
-                  }}
-                >
-                  {busy === loc ? "Saving…" : pickup ? "Mark picked up" : "Mark shipped"}
-                </button>
+              <div className="po-done">
+                <p className="pill ok">
+                  {done.carrier === "Picked up" ? "Picked up" : `Shipped ${done.carrier} ${done.tracking_number}`} on {new Date(done.shipped_at).toLocaleDateString("en-US")}
+                </p>
+                {done.has_label && <LabelLink orderId={o.id} loc={loc} />}
               </div>
+            ) : (
+              <ShipStop o={o} loc={loc} labels={labels} onShip={onShip} onBought={onBought} />
             )}
           </div>
         );
@@ -220,6 +383,7 @@ export default function DealerPortal() {
   const [state, setState] = useState<"loading" | "out" | "in" | "error">("loading");
   const [message, setMessage] = useState("");
   const [view, setView] = useState<"open" | "done" | "statement">("open");
+  const [bought, setBought] = useState<Bought | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -306,6 +470,19 @@ export default function DealerPortal() {
           {message}
         </p>
       )}
+      {bought && (
+        <div className="po-notice" role="status">
+          <p>
+            {bought.warning ??
+              `Label bought for order #${bought.order}: ${bought.carrier} ${bought.tracking_number}. ${money(bought.charge_cents)} will show on your statement.`}
+          </p>
+          {bought.label_url.startsWith("https://") && (
+            <a className="btn" href={bought.label_url} target="_blank" rel="noopener noreferrer">
+              Print label (PDF)
+            </a>
+          )}
+        </div>
+      )}
       {view === "statement" ? (
         <Statement />
       ) : list.length === 0 ? (
@@ -317,8 +494,14 @@ export default function DealerPortal() {
               key={o.id}
               o={o}
               locations={data.locations}
-              onShip={async (loc, carrier, tracking, pickup) => {
-                const r = await call({ action: "ship", order_id: o.id, location_id: loc, carrier, tracking_number: tracking, pickup });
+              labels={data.labels}
+              onBought={(next, b) => {
+                if (next) setData(next);
+                setBought(b);
+                setMessage("");
+              }}
+              onShip={async (ord, loc, carrier, tracking, pickup) => {
+                const r = await call({ action: "ship", order_id: ord.id, location_id: loc, carrier, tracking_number: tracking, pickup });
                 if (r.ok && r.data) {
                   setData(r.data);
                   setMessage("");

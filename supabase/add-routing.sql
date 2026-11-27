@@ -277,7 +277,7 @@ begin
     values (p_order_id, r.dealer_id,
             case when r.dealer_id = v_order.dealer_id then 'storefront' else 'routed' end,
             r.value, v_ship, coalesce(v_bps, 0), round(r.value::numeric * coalesce(v_bps, 0) / 10000)::integer)
-    on conflict (order_id, dealer_id) where kind <> 'reversal' do nothing;
+    on conflict (order_id, dealer_id) where kind <> 'reversal' and kind <> 'label' do nothing;
   end loop;
   perform fittings_settle_fee(p_order_id);
 end; $$;

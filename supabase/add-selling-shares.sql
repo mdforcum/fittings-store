@@ -152,7 +152,7 @@ begin
       insert into fittings_settlements (order_id, dealer_id, kind, parts_cents, shipping_cents, cut_bps, cut_cents,
                                         referral_cents, network_bps, network_cents)
       values (p_order_id, r.dealer_id, v_kind, v_shipped, v_ship, v_cut_bps, v_cut, v_referral, v_network_bps, v_network)
-      on conflict (order_id, dealer_id) where kind <> 'reversal' do nothing;
+      on conflict (order_id, dealer_id) where kind <> 'reversal' and kind <> 'label' do nothing;
     end if;
   end loop;
   perform fittings_settle_fee(p_order_id);

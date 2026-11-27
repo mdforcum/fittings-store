@@ -43,6 +43,7 @@ import {
   type Dealer,
 } from "@/lib/places";
 import { cardFee, getStripe } from "@/lib/payments";
+import { LABELS_KEY } from "@/lib/labels";
 import { locationShipFrom, mainLocationId } from "@/lib/operations";
 import { ActionError, dealerContacts, opsStatus, runOps } from "@/lib/operations-server";
 import { T, adminDb, env, getConfig, json, setConfig } from "@/lib/server";
@@ -106,7 +107,7 @@ async function loadData(db: SupabaseClient): Promise<AdminData> {
   // Charges and quotes came later: if their tables are missing the rest of the
   // back office still loads, with these lists empty.
   const orderIds = (o.data ?? []).map((r) => r.id as string);
-  const [ch, q, h, dl, lo, oh, al, sf, rt, sh] = await Promise.all([
+  const [ch, q, h, dl, lo, oh, al, sf, rt, sh, lb] = await Promise.all([
     orderIds.length
       ? db.from("fittings_order_charges").select("*, returns:fittings_core_returns(*)").in("order_id", orderIds)
       : Promise.resolve({ data: [], error: null }),
@@ -127,6 +128,8 @@ async function loadData(db: SupabaseClient): Promise<AdminData> {
     orderIds.length
       ? db.from("fittings_shipments").select("order_id, location_id, carrier, tracking_number, tracking_url, shipped_by, shipped_at").in("order_id", orderIds)
       : Promise.resolve({ data: [], error: null }),
+    // Dealer labels came with supabase/add-dealer-labels.sql.
+    db.from("fittings_shipments").select("shippo_transaction_id").limit(1),
   ]);
   const opsReady = !rt.error;
   const returnedBy = new Map<string, Array<{ product_id: string; qty: number }>>();
@@ -196,7 +199,7 @@ async function loadData(db: SupabaseClient): Promise<AdminData> {
       : NO_PLACES,
     storefronts: sf.error ? [] : ((sf.data ?? []) as Array<Record<string, unknown>>).map(normalizeStorefront),
     routing: readRouting(s.data as Record<string, unknown> | null),
-    ops: opsStatus(opsReady),
+    ops: opsStatus(opsReady, !lb.error, ((cfg.data ?? []) as Array<{ key: string; value: unknown }>).find((r) => r.key === LABELS_KEY)?.value),
     integrations: {
       stripe: modeOf(env.stripe, "_live_", "_test_"),
       webhook: webhook || !!process.env.STRIPE_WEBHOOK_SECRET,

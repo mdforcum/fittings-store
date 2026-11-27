@@ -143,13 +143,13 @@ create unique index if not exists fittings_settlements_one_line on shop.fittings
 -- The order's ledger writer names that index; this also works with the old key.
 do $$ declare d text; begin
   select pg_get_functiondef('shop.fittings_settle_order(uuid)'::regprocedure) into d;
-  if position('where kind <> ''reversal'' do nothing' in d) = 0 then
+  if position('where kind <> ''reversal''' in d) = 0 then
     execute replace(d, 'on conflict (order_id, dealer_id) do nothing', 'on conflict (order_id, dealer_id) where kind <> ''reversal'' do nothing');
   end if;
 end $$;
 alter table shop.fittings_settlements drop constraint if exists fittings_settlements_kind_check;
 alter table shop.fittings_settlements add constraint fittings_settlements_kind_check
-  check (kind in ('routed', 'storefront', 'referral', 'network', 'mixed', 'reversal'));
+  check (kind in ('routed', 'storefront', 'referral', 'network', 'mixed', 'reversal', 'label'));
 alter table shop.fittings_settlements add column if not exists reason text not null default '';
 -- Reversal lines carry negative amounts; every other line stays zero or more.
 alter table shop.fittings_settlements drop constraint if exists fittings_settlements_parts_cents_check;
@@ -260,7 +260,7 @@ begin
   ) into v_all_back;
   select coalesce(sum(unit_price_cents * qty), 0) into v_order_parts from fittings_order_items where order_id = p_order_id;
   for s in
-    select * from fittings_settlements where order_id = p_order_id and kind <> 'reversal'
+    select * from fittings_settlements where order_id = p_order_id and kind not in ('reversal', 'label')
   loop
     v_val := coalesce((v_by->>(s.dealer_id::text))::integer, 0);
     -- what of this dealer's line is still standing after earlier returns

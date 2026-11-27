@@ -166,7 +166,9 @@ and everything else are reachable only with the secret key.
 - **Import spreadsheet** (Inventory). A CSV with Part number and Qty (plus Name for new parts and Price) sets counts at one location as a recount, after a preview.
 - **Running low tab.** Parts at or under the low-stock number, or with under about 30 days left at the last 30 days' pace, by location.
 
-Checks: `supabase/test-operations.sql` on a scratch database with every change loaded.
+- **Dealer shipping labels** (`supabase/add-dealer-labels.sql`). Off until turned on in Settings, Dealers and locations, Dealer shipping labels. A dealer types the package weight and size on an order, sees label prices from the Shippo account, and buys one. The label prints from that location's street address, the tracking fills in, and the charge goes on the dealer's statement as a "Shipping label" line. The markup (a percent, a flat amount per label, or both) lives in the private config under `dealer_labels` and starts at 0, so dealers pay what the label costs. A dealer can always type in tracking from its own carrier account instead. Linking a dealer's own carrier accounts needs a Shippo Platform Account and is not built yet.
+
+Checks: `supabase/test-operations.sql` and `supabase/test-dealer-labels.sql` on a scratch database with every change loaded.
 
 ## Working on it
 

@@ -611,3 +611,19 @@ dialog.sheet { margin: 0 0 0 auto; width: min(440px, 100%); max-width: 100%; hei
 }
 .order-shipments { display: grid; gap: 4px; }
 .order-shipments li { display: block; }
+
+/* Dealer portal: buying a label */
+.po-label { display: grid; gap: 12px; }
+.po-box { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 10px; align-items: end; }
+.po-box label { display: grid; gap: 4px; font-weight: 600; }
+.po-box .btn { grid-column: 1 / -1; }
+.po-quotes { border: 1px solid var(--rule); padding: 10px 12px; margin: 0; display: grid; gap: 4px; min-width: 0; }
+.po-quotes legend { font-weight: 600; padding: 0 6px; }
+.po-quote { display: grid; grid-template-columns: 26px 1fr auto; gap: 12px; align-items: center; min-height: 48px; cursor: pointer; }
+.po-quote input { width: 22px; height: 22px; min-height: 0; }
+.po-done { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.po-notice { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; border: 1px solid var(--rule); border-left: 4px solid var(--primary); background: var(--surface); padding: 12px 14px; margin-bottom: 12px; }
+.po-notice p { margin: 0; flex: 1 1 240px; }
+@media print { .po-label, .po-notice, .po-done .btn { display: none; } }
+.po-box label { min-width: 0; }
+.po-box input { width: 100%; min-width: 0; box-sizing: border-box; }

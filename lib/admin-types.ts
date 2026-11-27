@@ -1,4 +1,5 @@
 // Shapes shared by the back-end API and the back-end screens.
+import type { LabelSettings } from "./labels";
 import type { Product, Settings } from "./catalog";
 import type { Allocation, Places } from "./places";
 import type { RoutingSettings } from "./settlements";
@@ -171,7 +172,7 @@ export type AdminData = {
   /** Whether Backroad Iron orders go to dealers, and the cut. */
   routing: RoutingSettings;
   /** Returns, counter sales, dealer logins and alerts (supabase/add-operations.sql). */
-  ops: { ready: boolean; email: boolean; text: boolean };
+  ops: { ready: boolean; email: boolean; text: boolean; labels: LabelSettings & { ready: boolean; shippo: boolean } };
 };
 
 /** One line of an item's stock history. */

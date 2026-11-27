@@ -4,7 +4,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { TYPE_CATEGORY } from "./foundation";
 import { counterLines, IMPORT_LIMIT, okEmail, refundFor, runningLow, stillOut, toE164, type LowLine } from "./operations";
+import { LABELS_KEY, MAX_FLAT_CENTS, MAX_MARKUP_BPS, readLabels } from "./labels";
 import { hashPassword, passwordProblem } from "./passwords";
+import { env, setConfig } from "./server";
 import { getStripe } from "./payments";
 import { onhandMap } from "./places";
 import { emailReady, queueLowStock, sendQueued, textReady } from "./notify";
@@ -29,8 +31,8 @@ function slug(text: string): string {
     .slice(0, 48);
 }
 
-export function opsStatus(ready: boolean) {
-  return { ready, email: emailReady(), text: textReady() };
+export function opsStatus(ready: boolean, labelsReady = false, labelConfig: unknown = null) {
+  return { ready, email: emailReady(), text: textReady(), labels: { ...readLabels(labelConfig), ready: labelsReady, shippo: !!env.shippo } };
 }
 
 /** Parts running low at every active store location. */
@@ -270,6 +272,19 @@ export async function runOps(action: string, a: Payload, db: SupabaseClient): Pr
       const r = await db.from("fittings_dealer_users").update({ disabled: a.disabled !== false }).eq("id", a.user_id as string);
       if (r.error) fail(r.error.message);
       return {};
+    }
+
+    // Dealer shipping labels ------------------------------------------------------------------------
+    case "labels.save": {
+      const bps = int(a.markup_bps);
+      const flat = int(a.flat_cents);
+      if (bps == null || bps < 0 || bps > MAX_MARKUP_BPS) fail("The markup is a percent from 0 to 50.");
+      if (flat == null || flat < 0 || flat > MAX_FLAT_CENTS) fail(`The flat amount per label is $0 to $${MAX_FLAT_CENTS / 100}.`);
+      const probe = await db.from("fittings_shipments").select("shippo_transaction_id").limit(1);
+      if (probe.error) fail("Run supabase/add-dealer-labels.sql in the Supabase SQL Editor first.");
+      const next = { on: a.on === true, markup_bps: bps as number, flat_cents: flat as number };
+      await setConfig(db, LABELS_KEY, next);
+      return { labels: next };
     }
 
     // Alert outbox ----------------------------------------------------------------------------------

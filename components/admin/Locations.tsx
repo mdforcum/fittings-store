@@ -41,6 +41,7 @@ export default function Locations({ data, act, say }: Props) {
         default; if none has it all, each part comes from wherever it is.
       </p>
       {data.routing?.ready && <RoutingBlock data={data} act={act} say={say} />}
+      {data.ops?.ready && <LabelsBlock data={data} act={act} say={say} />}
       {places.dealers.map((d) => (
         <DealerBlock key={d.id} dealer={d} data={data} act={act} say={say} />
       ))}
@@ -265,6 +266,64 @@ export function LocationForm({
             Cancel
           </button>
         )}
+      </div>
+    </form>
+  );
+}
+
+/** Whether dealers can buy shipping labels on the dealer page, and any markup on them. */
+function LabelsBlock({ data, act, say }: Props) {
+  const l = data.ops.labels;
+  const [f, setF] = useState({ on: l.on, markup: bpsToPercent(l.markup_bps), flat: (l.flat_cents / 100).toFixed(2) });
+  const [busy, setBusy] = useState(false);
+  const canUse = l.ready && l.shippo;
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    const bps = percentToBps(f.markup);
+    const flatText = f.flat.replace(/[$\s]/g, "");
+    const flat = /^\d+(\.\d{1,2})?$/.test(flatText) ? Math.round(Number(flatText) * 100) : Number.NaN;
+    if (Number.isNaN(bps)) return say("The markup is a percent from 0 to 50. Use 0 for none.", true);
+    if (Number.isNaN(flat) || flat > 2000) return say("The flat amount per label is dollars from 0 to 20. Use 0 for none.", true);
+    setBusy(true);
+    const done = await act("labels.save", { on: f.on, markup_bps: bps, flat_cents: flat });
+    setBusy(false);
+    if (done) say(f.on ? "Dealers can buy labels on their dealer page now" : "Dealer labels saved (turned off)");
+  }
+
+  return (
+    <form className="form panel loc-form" onSubmit={save} aria-label="Dealer shipping labels">
+      <h3>Dealer shipping labels</h3>
+      <p className="hint">
+        Lets a dealer buy a label for its part of an order from the dealer page, on your Shippo account. The label cost, plus any markup
+        below, comes off that dealer&apos;s statement. Dealers can always type in a tracking number from their own carrier account instead.
+      </p>
+      {!l.ready && <p className="warn">Run supabase/add-dealer-labels.sql in the Supabase SQL Editor to switch this on.</p>}
+      {l.ready && !l.shippo && <p className="warn">Shippo isn&apos;t connected yet. Add SHIPPO_API_TOKEN in Vercel.</p>}
+      <div className="loc-ticks">
+        <label>
+          <input type="checkbox" checked={f.on} disabled={!canUse} onChange={(e) => setF({ ...f, on: e.target.checked })} /> Dealers can buy labels on the
+          dealer page
+        </label>
+      </div>
+      <div className="two">
+        <label htmlFor="lbl-markup">
+          Markup on the label cost, % <span className="hint">(0 for none)</span>
+          <input id="lbl-markup" inputMode="decimal" value={f.markup} onChange={(e) => setF({ ...f, markup: e.target.value })} />
+        </label>
+        <label htmlFor="lbl-flat">
+          Flat amount per label, $ <span className="hint">(0 for none)</span>
+          <input id="lbl-flat" inputMode="decimal" value={f.flat} onChange={(e) => setF({ ...f, flat: e.target.value })} />
+        </label>
+      </div>
+      <p className="hint">
+        With both at 0, dealers pay exactly what the label costs you. Before you turn this on, ask Shippo whether your account type covers
+        labels that your dealers ship.
+      </p>
+      <div className="inline">
+        <button type="submit" className="btn sm" disabled={busy || !l.ready}>
+          {busy ? "Saving…" : "Save label settings"}
+        </button>
       </div>
     </form>
   );
