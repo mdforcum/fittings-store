@@ -175,19 +175,20 @@ export function parseCsv(text: string): string[][] {
   return rows.filter((r) => r.some((c) => c.trim() !== ""));
 }
 
-const HEADERS: Record<"part" | "name" | "qty" | "price", RegExp> = {
+const HEADERS: Record<"part" | "name" | "qty" | "price" | "upc", RegExp> = {
+  upc: /^(upc|upc\s*(code|number|#)?|bar\s*code|gtin|ean)$/i,
   part: /^(part\s*(number|no\.?|num|#)?|part_number|sku|item\s*(number|no\.?|#)|number|p\/n|pn)$/i,
   name: /^(name|description|desc|item|item\s*name|title)$/i,
   qty: /^(qty|quantity|count|on\s*hand|onhand|stock|in\s*stock)$/i,
   price: /^(price|sell\s*price|retail|list|list\s*price|unit\s*price)$/i,
 };
 
-export type ImportColumns = { part: number; name: number; qty: number; price: number };
+export type ImportColumns = { part: number; name: number; qty: number; price: number; upc: number };
 
 /** Finds the columns by their headings; -1 where a column isn't there. */
 export function importColumns(header: string[]): ImportColumns {
   const find = (re: RegExp) => header.findIndex((h) => re.test(h.trim()));
-  return { part: find(HEADERS.part), name: find(HEADERS.name), qty: find(HEADERS.qty), price: find(HEADERS.price) };
+  return { part: find(HEADERS.part), name: find(HEADERS.name), qty: find(HEADERS.qty), price: find(HEADERS.price), upc: find(HEADERS.upc) };
 }
 
 export type ImportProduct = { id: string; name: string; part_number: string };
@@ -203,7 +204,18 @@ export type ImportLine = {
   /** Count at the location now (matched items). */
   now: number;
   problem: string;
+  /** The barcode on the row, digits only; "" when there isn't one. */
+  upc: string;
+  /** True when the barcode isn't linked to any part yet, so importing can link it to this one. */
+  upc_new: boolean;
 };
+
+/** A barcode already linked to a part: `norm` is the digits, `label` starts with "UPC". */
+export type ImportCode = { norm: string; product_id: string; label?: string };
+const upcKey = (digits: string) => digits.replace(/^0+(?=\d)/, "");
+
+/** True when importing the line would change nothing: same count, no price, no new barcode. */
+export const importUnchanged = (l: ImportLine) => !!l.product_id && l.qty === l.now && l.price_cents == null && !l.upc_new;
 
 export const normPart = (s: string) => s.toUpperCase().replace(/[\s\-_.\/]/g, "");
 
@@ -216,42 +228,61 @@ export function priceCents(text: string): number | null {
 
 /**
  * Turns spreadsheet rows into a preview: each line matched to an item by part
- * number, with the count it will become at the location. Nothing is saved.
+ * number, or by its barcode when the file has a UPC column, with the count it
+ * will become at the location. Nothing is saved.
  */
-export function importPlan(rows: string[][], products: ImportProduct[], onhand: Onhand, locationId: string): { lines: ImportLine[]; problem: string } {
+export function importPlan(rows: string[][], products: ImportProduct[], onhand: Onhand, locationId: string, codes: ImportCode[] = []): { lines: ImportLine[]; problem: string } {
   if (rows.length < 2) return { lines: [], problem: "The file needs a heading row and at least one part." };
   const cols = importColumns(rows[0]);
-  if (cols.part < 0) return { lines: [], problem: "Add a column headed Part number." };
+  if (cols.part < 0 && cols.upc < 0) return { lines: [], problem: "Add a column headed Part number." };
   if (cols.qty < 0) return { lines: [], problem: "Add a column headed Qty." };
   const body = rows.slice(1);
   if (body.length > IMPORT_LIMIT) return { lines: [], problem: `Import up to ${IMPORT_LIMIT} rows at a time. This file has ${body.length}.` };
   const byPart = new Map<string, ImportProduct>();
   for (const p of products) if (p.part_number) byPart.set(normPart(p.part_number), p);
+  const byId = new Map(products.map((p) => [p.id, p]));
+  const byUpc = new Map<string, ImportProduct>();
+  for (const c of codes) {
+    const p = byId.get(c.product_id);
+    if (p && /^\d+$/.test(c.norm) && (c.label === undefined || c.label.startsWith("UPC"))) byUpc.set(upcKey(c.norm), p);
+  }
   const seen = new Set<string>();
   const lines = body.map((r, i): ImportLine => {
-    const part = (r[cols.part] ?? "").trim().slice(0, 60);
+    const part = cols.part >= 0 ? (r[cols.part] ?? "").trim().slice(0, 60) : "";
+    const upcText = cols.upc >= 0 ? (r[cols.upc] ?? "").trim() : "";
+    const upcDigits = upcText.replace(/[\s-]/g, "");
+    const upcOk = /^\d{6,14}$/.test(upcDigits);
+    const upc = upcOk ? upcDigits : "";
+    const byCode = upc ? (byUpc.get(upcKey(upc)) ?? null) : null;
     const name = cols.name >= 0 ? (r[cols.name] ?? "").trim().slice(0, 120) : "";
     const qtyText = (r[cols.qty] ?? "").replace(/[,\s]/g, "");
     const qty = /^\d+$/.test(qtyText) ? Number(qtyText) : null;
     const price = cols.price >= 0 ? priceCents(r[cols.price] ?? "") : null;
-    const match = byPart.get(normPart(part)) ?? null;
+    const byNumber = part ? (byPart.get(normPart(part)) ?? null) : null;
+    const match = byNumber ?? byCode;
+    const key = match ? `id:${match.id}` : part ? `pn:${normPart(part)}` : upc ? `upc:${upcKey(upc)}` : "";
     let problem = "";
-    if (!part) problem = "No part number.";
-    else if (seen.has(normPart(part))) problem = "This part is on an earlier row too.";
+    if (upcText && !upcOk) problem = /e\+?\d+$/i.test(upcText) ? "The spreadsheet changed this barcode. Set that column to Text and save again." : "A barcode is 6 to 14 digits.";
+    else if (!part && !upc) problem = "No part number.";
+    else if (byNumber && byCode && byNumber.id !== byCode.id) problem = `This barcode is already linked to another part (${byCode.part_number || byCode.name}).`;
+    else if (!part && !match) problem = "No part has this barcode yet. Add its part number.";
+    else if (seen.has(key)) problem = "This part is on an earlier row too.";
     else if (qty == null) problem = "The count isn't a whole number.";
     else if (qty > 100000) problem = "That count looks too big.";
     else if (price != null && Number.isNaN(price)) problem = "The price isn't a dollar amount.";
     else if (!match && !name) problem = "New part: give it a name.";
-    if (part) seen.add(normPart(part));
+    if (key) seen.add(key);
     return {
       row: i + 2,
-      part_number: part,
+      part_number: part || (match?.part_number ?? ""),
       name: match ? match.name : name,
       qty,
       price_cents: price != null && Number.isNaN(price) ? null : price,
       product_id: match?.id ?? null,
       now: match ? (onhand[match.id]?.[locationId] ?? 0) : 0,
       problem,
+      upc,
+      upc_new: !!upc && !byCode && !problem,
     };
   });
   return { lines, problem: "" };
@@ -262,7 +293,7 @@ export function importSummary(lines: ImportLine[]): { update: number; add: numbe
   for (const l of lines) {
     if (l.problem) s.skip++;
     else if (!l.product_id) s.add++;
-    else if (l.qty === l.now && l.price_cents == null) s.same++;
+    else if (importUnchanged(l)) s.same++;
     else s.update++;
   }
   return s;

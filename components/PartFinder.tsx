@@ -137,7 +137,8 @@ export default function PartFinder({ parts, index, shelf, onPick, photo, onLink,
     }
   }
 
-  const found = results && q.trim() ? smartSearch(q, parts, index, shelf) : [];
+  // A barcode waiting to be linked always shows matches here, so there is something to pick.
+  const found = (results || !!unknown) && q.trim() ? smartSearch(q, parts, index, shelf) : [];
   const row = (id: string, because: string, key: string) => {
     const p = part(id);
     if (!p) return null;

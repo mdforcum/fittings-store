@@ -4,8 +4,10 @@ import {
   counterLines,
   counterTotal,
   counterWarnings,
+  dealerCountLines,
   importColumns,
   importPlan,
+  importUnchanged,
   importSummary,
   locationShipFrom,
   lowStockText,
@@ -93,8 +95,11 @@ test("CSV: quotes, doubled quotes, commas and line breaks inside quotes", () => 
 });
 
 test("import columns are found by their headings", () => {
-  assert.deepEqual(importColumns(["SKU", "Description", "On hand", "List price"]), { part: 0, name: 1, qty: 2, price: 3 });
-  assert.deepEqual(importColumns(["Part #", "Qty"]), { part: 0, name: -1, qty: 1, price: -1 });
+  assert.deepEqual(importColumns(["SKU", "Description", "On hand", "List price"]), { part: 0, name: 1, qty: 2, price: 3, upc: -1 });
+  assert.deepEqual(importColumns(["Part #", "Qty"]), { part: 0, name: -1, qty: 1, price: -1, upc: -1 });
+  assert.deepEqual(importColumns(["Bar code", "Count"]), { part: -1, name: -1, qty: 1, price: -1, upc: 0 });
+  assert.equal(importColumns(["UPC Code"]).upc, 0);
+  assert.equal(importColumns(["GTIN"]).upc, 0);
   assert.equal(priceCents("$1,200.50"), 120050);
   assert.equal(priceCents(""), null);
   assert.ok(Number.isNaN(priceCents("call")));
@@ -225,4 +230,56 @@ test("the ZIP code package gives enough real points to route by miles", async ()
   assert.ok(rows.length > 30000, `expected most United States ZIP codes, got ${rows.length}`);
   const shelbyville = rows.find((r) => r.zip === "62565");
   assert.ok(shelbyville && Math.abs(shelbyville.lat - 39.4) < 0.3 && Math.abs(shelbyville.lng + 88.8) < 0.3, "62565 sits in central Illinois");
+});
+
+test("a UPC column finds parts by barcode and marks new barcodes to link", () => {
+  const products = [
+    { id: "elbow", name: "Elbow", part_number: "6400-08-08" },
+    { id: "tee", name: "Tee", part_number: "2603-08" },
+  ];
+  const onhand = { elbow: { L1: 3 }, tee: { L1: 2 } };
+  const codes = [
+    { norm: "012345678905", product_id: "tee", label: "UPC 012345678905" },
+    { norm: "86572263", product_id: "elbow", label: "Replaces CNH 86572263" },
+  ];
+  const rows = parseCsv(
+    [
+      "UPC,Part number,Name,Qty",
+      "0 12345 67890 5,,,4", // a linked barcode, no part number: finds the tee
+      "71234500001,6400-08-08,,3", // same count, new barcode: links it
+      "012345678905,6400-08-08,,9", // the tee's barcode on the elbow's row
+      "1.23457E+11,NEW-1,Cap,1", // a spreadsheet mangled it
+      "12AB,NEW-2,Cap,1",
+      "99999999,,,1", // nobody's barcode and no part number
+      "86572263,,,1", // an OEM number is not a barcode
+      "44444444,NEW-3,Plug,2", // a new part with a barcode
+      ",,,1",
+    ].join("\n"),
+  );
+  const { lines, problem } = importPlan(rows, products, onhand, "L1", codes);
+  assert.equal(problem, "");
+  assert.deepEqual(
+    lines.map((l) => [l.row, l.product_id, l.part_number, l.qty, l.upc, l.upc_new, l.problem]),
+    [
+      [2, "tee", "2603-08", 4, "012345678905", false, ""],
+      [3, "elbow", "6400-08-08", 3, "71234500001", true, ""],
+      [4, "elbow", "6400-08-08", 9, "012345678905", false, "This barcode is already linked to another part (2603-08)."],
+      [5, null, "NEW-1", 1, "", false, "The spreadsheet changed this barcode. Set that column to Text and save again."],
+      [6, null, "NEW-2", 1, "", false, "A barcode is 6 to 14 digits."],
+      [7, null, "", 1, "99999999", false, "No part has this barcode yet. Add its part number."],
+      [8, null, "", 1, "86572263", false, "No part has this barcode yet. Add its part number."],
+      [9, null, "NEW-3", 2, "44444444", true, ""],
+      [10, null, "", 1, "", false, "No part number."],
+    ],
+  );
+  assert.equal(importUnchanged(lines[1]), false, "same count but a new barcode still counts as a change");
+  assert.deepEqual(importSummary(lines), { update: 2, add: 1, same: 0, skip: 6 });
+
+  // A file with only UPC and Qty is enough when the barcodes are linked; leading zeros don't matter.
+  const short = importPlan(parseCsv("Barcode,Count\n12345678905,7\n012345678905,1\n"), products, onhand, "L1", codes);
+  assert.equal(short.problem, "");
+  assert.deepEqual(short.lines.map((l) => [l.product_id, l.qty, l.problem]), [["tee", 7, ""], ["tee", 1, "This part is on an earlier row too."]]);
+  assert.equal(importPlan([["Name", "Qty"], ["a", "1"]], products, onhand, "L1").problem, "Add a column headed Part number.");
+  // Dealers get counts only: a matched barcode row goes through, and nothing is linked for them.
+  assert.deepEqual(dealerCountLines(lines).apply, [{ product_id: "tee", qty: 4 }]);
 });

@@ -85,7 +85,7 @@ export default function DealerStock({ locations, supportEmail, call }: { locatio
     done(await call({ action: "stock.sold", location_id: loc, product_id: id, qty: 1 }), `Took 1 ${name} off the shelf at ${locName}.`);
   }
 
-  const plan = rows && stock ? importPlan(rows, stock.products, stock.onhand, loc) : null;
+  const plan = rows && stock ? importPlan(rows, stock.products, stock.onhand, loc, index.codes) : null;
   const counts = plan && !plan.problem ? dealerCountLines(plan.lines) : null;
 
   async function readFile(f: File | undefined) {
@@ -245,8 +245,8 @@ export default function DealerStock({ locations, supportEmail, call }: { locatio
           <>
             <h3>Load a count spreadsheet</h3>
             <p className="hint">
-              Save your spreadsheet as CSV with a heading row and two columns: <b>Part number</b> and <b>Qty</b>. Each count replaces the count at {locName}. Up
-              to {IMPORT_LIMIT} rows.
+              Save your spreadsheet as CSV with a heading row and two columns: <b>Part number</b> and <b>Qty</b>. A <b>UPC</b> column can stand in for the
+              part number when the barcode is already linked to a part. Each count replaces the count at {locName}. Up to {IMPORT_LIMIT} rows.
             </p>
             <label className="ds-field" htmlFor="ds-file">
               CSV file

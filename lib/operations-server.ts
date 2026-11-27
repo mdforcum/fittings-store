@@ -181,6 +181,7 @@ export async function runOps(action: string, a: Payload, db: SupabaseClient): Pr
         name: str(l.name, 120),
         qty: int(l.qty),
         price_cents: l.price_cents === null || l.price_cents === undefined ? null : int(l.price_cents),
+        upc: /^\d{6,14}$/.test(str(l.upc, 20)) ? str(l.upc, 20) : "",
       }));
       if (rows.some((r) => r.qty == null || r.qty < 0)) fail("Every count must be a whole number, 0 or more.");
       if (rows.some((r) => r.price_cents != null && r.price_cents < 0)) fail("Prices must be 0 or more.");
@@ -227,7 +228,36 @@ export async function runOps(action: string, a: Payload, db: SupabaseClient): Pr
       });
       if (missing(r.error)) fail(NOT_SET_UP);
       if (r.error) fail(r.error.message);
-      return { changed: r.data, added: fresh.length };
+      // Barcodes from a UPC column: link each to its part so a scan finds it. A barcode that already
+      // belongs to another part is left alone and counted, never moved.
+      const wanted = rows.filter((x) => x.upc && x.product_id).map((x) => ({ product_id: x.product_id as string, upc: x.upc }));
+      let linked = 0;
+      let barcodesLeft = 0;
+      if (wanted.length) {
+        const owner = new Map<string, string>();
+        for (let i = 0; i < wanted.length; i += 200) {
+          const have = await db.from("fittings_xrefs").select("product_id, number_norm").eq("kind", "upc").in("number_norm", wanted.slice(i, i + 200).map((w) => w.upc));
+          for (const h of have.data ?? []) owner.set(String(h.number_norm), String(h.product_id));
+        }
+        const links: Array<Record<string, string>> = [];
+        for (const w of wanted) {
+          const has = owner.get(w.upc);
+          if (has && has !== w.product_id) barcodesLeft++;
+          else if (!has) {
+            owner.set(w.upc, w.product_id);
+            links.push({ product_id: w.product_id, kind: "upc", brand: "", number: w.upc, number_norm: w.upc });
+          }
+        }
+        for (let i = 0; i < links.length; i += 500) {
+          const up = await db.from("fittings_xrefs").upsert(links.slice(i, i + 500), { onConflict: "product_id,kind,brand,number_norm", ignoreDuplicates: true });
+          if (up.error) {
+            barcodesLeft += links.length - i;
+            break;
+          }
+          linked += Math.min(500, links.length - i);
+        }
+      }
+      return { changed: r.data, added: fresh.length, linked, barcodes_left: barcodesLeft };
     }
 
     // Running low ---------------------------------------------------------------------------------

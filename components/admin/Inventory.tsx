@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { AdminData, Cost, StockMove } from "@/lib/admin-types";
 import { NO_PLACES, countsLine, type Places } from "@/lib/places";
 import { LocationForm } from "./Locations";
@@ -18,6 +18,8 @@ import type { Act, Say } from "../Admin";
 import { Modal, Picture } from "../ui";
 import DetailsEditor from "./Details";
 import ImportStock from "./ImportStock";
+import PartFinder from "../PartFinder";
+import { EMPTY_INDEX, smartSearch, type LookupBin, type LookupIndex, type PhotoRead } from "@/lib/lookup";
 
 type Props = { data: AdminData; act: Act; say: Say; reload: () => Promise<void> };
 type Filter = "all" | "live" | "out" | "noprice";
@@ -32,6 +34,22 @@ export default function Inventory({ data, act, say, reload }: Props) {
   const [editing, setEditing] = useState<string | null>(null); // product id, "new", or null
   const [stockOf, setStockOf] = useState<string | null>(null); // product id whose stock history is open
   const [bulk, setBulk] = useState("");
+  // Finding by scan, UPC, bin or photo: the cross-reference index, the bin last scanned, the part last picked.
+  const [index, setIndex] = useState<LookupIndex>(EMPTY_INDEX);
+  const [bin, setBin] = useState<LookupBin | null>(null);
+  const [picked, setPicked] = useState("");
+  const [scanned, setScanned] = useState(false); // the stock panel was opened by a scan or an exact match
+  const opsReady = !!data.ops?.ready;
+  useEffect(() => {
+    if (!opsReady) return;
+    let live = true;
+    act("lookup.index").then((r) => {
+      if (live && r?.index) setIndex(r.index as LookupIndex);
+    });
+    return () => {
+      live = false;
+    };
+  }, [act, opsReady]);
   const places = data.places ?? NO_PLACES;
   // The location staff are working at: counts, − and +, and new items apply there.
   const [atPick, setAtPick] = useState("");
@@ -76,11 +94,20 @@ export default function Inventory({ data, act, say, reload }: Props) {
   }
 
   const needle = q.trim().toLowerCase();
-  const shown = data.products.filter((p) => {
-    if (filter !== "all" && adminStatus(p).key !== filter) return false;
-    if (at && onlyHere && !(qtyOf(p) > 0)) return false;
-    return !needle || [p.name, p.part_number, p.thread, p.size, p.dash].join(" ").toLowerCase().includes(needle);
-  });
+  // A typed search also looks at UPCs, replaced numbers and near-miss spelling, best match first.
+  const smart = needle ? smartSearch(needle, data.products, index, (id) => (at ? places.onhand[id]?.[at] : undefined), 60).map((f) => f.id) : [];
+  const rank = new Map(smart.map((id, i) => [id, i]));
+  const inBin = bin && !needle ? new Set(bin.product_ids) : null;
+  const shown = data.products
+    .filter((p) => {
+      // A scanned bin shows every part kept in it; a scanned part shows that part. Both skip the other filters.
+      if (inBin) return inBin.has(p.id);
+      if (picked && !needle) return p.id === picked;
+      if (filter !== "all" && adminStatus(p).key !== filter) return false;
+      if (at && onlyHere && !(qtyOf(p) > 0)) return false;
+      return !needle || rank.has(p.id) || [p.name, p.part_number, p.thread, p.size, p.dash].join(" ").toLowerCase().includes(needle);
+    })
+    .sort((a, b) => (needle ? (rank.get(a.id) ?? 999) - (rank.get(b.id) ?? 999) : 0));
 
   async function applyBulk() {
     const m = Number(bulk.replace(/[%\s]/g, ""));
@@ -163,17 +190,64 @@ export default function Inventory({ data, act, say, reload }: Props) {
       </p>
 
       <div className="toolbar">
-        <label className="sr" htmlFor="invQ">
-          Find an item
-        </label>
-        <input
-          type="search"
-          id="invQ"
-          placeholder="Find by name, thread or part #"
-          autoComplete="off"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
+        <PartFinder
+          parts={data.products}
+          index={index}
+          shelf={(id) => (at ? places.onhand[id]?.[at] : undefined)}
+          results={false}
+          label="Find an item"
+          inputId="invQ"
+          onQuery={(v) => {
+            setQ(v);
+            if (v) {
+              setBin(null);
+              setPicked("");
+            }
+          }}
+          onBin={(b) => {
+            setBin(b);
+            setPicked("");
+          }}
+          onPick={(id) => {
+            // A scan or an exact match goes straight to that part's stock, ready to type how many came in.
+            setPicked(id);
+            setBin(null);
+            setScanned(true);
+            setStockOf(id);
+          }}
+          photo={
+            opsReady
+              ? async (image, type) => {
+                  const r = await act("lookup.photo", { image, type });
+                  return r ? { read: r.read as PhotoRead } : { problem: "The photo couldn't be read. Type the number instead." };
+                }
+              : undefined
+          }
+          onLink={
+            opsReady
+              ? async (code, id) => {
+                  const r = await act("upc.link", { product_id: id, code });
+                  if (r?.index) setIndex(r.index as LookupIndex);
+                  return !!r;
+                }
+              : undefined
+          }
         />
+        {(bin || picked) && !needle && (
+          <div className="inline">
+            <span>{bin ? `Showing bin ${bin.code}: ${bin.product_ids.length} part${bin.product_ids.length === 1 ? "" : "s"} kept there.` : "Showing the part you scanned."}</span>
+            <button
+              type="button"
+              className="btn ghost sm"
+              onClick={() => {
+                setBin(null);
+                setPicked("");
+              }}
+            >
+              Show all items
+            </button>
+          </div>
+        )}
         <div className="chips" role="group" aria-label="Status">
           {chips.map(([id, label]) => (
             <button key={id} type="button" className="chip" aria-pressed={filter === id} onClick={() => setFilter(id)}>
@@ -226,7 +300,10 @@ export default function Inventory({ data, act, say, reload }: Props) {
             act={act}
             say={say}
             onEdit={() => setEditing(p.id)}
-            onStock={() => setStockOf(p.id)}
+            onStock={() => {
+              setScanned(false);
+              setStockOf(p.id);
+            }}
           />
         ))}
       </ul>
@@ -248,7 +325,21 @@ export default function Inventory({ data, act, say, reload }: Props) {
           }}
         />
       )}
-      {importing && <ImportStock products={data.products} places={places} at={at} act={act} say={say} onClose={() => setImporting(false)} />}
+      {importing && (
+        <ImportStock
+          products={data.products}
+          places={places}
+          at={at}
+          act={act}
+          say={say}
+          codes={index.codes}
+          onClose={() => {
+            setImporting(false);
+            // New barcodes may have been linked: read the index again so a scan finds them.
+            if (opsReady) void act("lookup.index").then((r) => r?.index && setIndex(r.index as LookupIndex));
+          }}
+        />
+      )}
       {moving && <MoveStock products={data.products} places={places} from={at} act={act} say={say} onClose={() => setMoving(false)} />}
       {stockOf && data.products.some((p) => p.id === stockOf) && (
         <StockHistory
@@ -258,7 +349,16 @@ export default function Inventory({ data, act, say, reload }: Props) {
           places={data.places ?? NO_PLACES}
           act={act}
           say={say}
-          onClose={() => setStockOf(null)}
+          receiveAt={scanned ? at : ""}
+          quick={scanned}
+          onClose={() => {
+            setStockOf(null);
+            if (scanned) {
+              // Back to the box, ready for the next scan.
+              setScanned(false);
+              setTimeout(() => document.getElementById("invQ")?.focus(), 60);
+            }
+          }}
         />
       )}
       {editing && (
@@ -762,6 +862,8 @@ function StockHistory({
   act,
   say,
   onClose,
+  receiveAt = "",
+  quick = false,
 }: {
   product: Product;
   held: number;
@@ -769,6 +871,10 @@ function StockHistory({
   act: Act;
   say: Say;
   onClose: () => void;
+  /** The location being worked, when the panel was opened by a scan. */
+  receiveAt?: string;
+  /** Opened by a scan: start in "How many" and close after the count is saved, ready for the next scan. */
+  quick?: boolean;
 }) {
   const [moves, setMoves] = useState<StockMove[] | null>(null);
   const [numbers, setNumbers] = useState<Record<string, number>>({});
@@ -777,7 +883,13 @@ function StockHistory({
   const home = places.default_location_id ?? locations[0]?.id ?? "";
   const [qty, setQty] = useState("");
   const [note, setNote] = useState("");
-  const [rcvAt, setRcvAt] = useState(home);
+  const [rcvAt, setRcvAt] = useState(receiveAt && locations.some((l) => l.id === receiveAt) ? receiveAt : home);
+  const qtyBox = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (!quick) return;
+    const t = setTimeout(() => qtyBox.current?.focus(), 80);
+    return () => clearTimeout(t);
+  }, [quick]);
   const [mv, setMv] = useState({ qty: "", from: "", to: "" });
   const [busy, setBusy] = useState(false);
   const counts = places.onhand[product.id] ?? {};
@@ -808,6 +920,7 @@ function StockHistory({
       say(`Added ${n} to ${product.name}${many ? ` at ${placeName(rcvAt)}` : ""}`);
       setQty("");
       setNote("");
+      if (quick) return onClose();
       load();
     }
   }
@@ -887,7 +1000,7 @@ function StockHistory({
         <div className="two">
           <label htmlFor="rcv-qty">
             How many
-            <input id="rcv-qty" inputMode="numeric" autoComplete="off" value={qty} onChange={(e) => setQty(e.target.value)} />
+            <input id="rcv-qty" ref={qtyBox} inputMode="numeric" autoComplete="off" value={qty} onChange={(e) => setQty(e.target.value)} />
           </label>
           {many ? (
             <label htmlFor="rcv-at">
