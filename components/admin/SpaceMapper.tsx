@@ -242,7 +242,7 @@ export default function SpaceMapper({ say, scope = "admin" }: { say: Say; scope?
           </p>
         </div>
         {!list.vision && <p className="hint">{noReading}</p>}
-        {list.locations.length === 0 && <p className="empty">{office ? "No store locations yet. Add one in Settings first." : "No locations are set up for your login yet. Ask Backroad Iron."}</p>}
+        {list.locations.length === 0 && <p className="empty">{office ? "No store locations yet. Add one under Dealers, Dealers and locations first." : "No locations are set up for your login yet. Ask Backroad Iron."}</p>}
         <ul className="hs-list">
           {list.maps.map((m) => (
             <li key={m.id} className="hs-item">
@@ -294,7 +294,7 @@ export default function SpaceMapper({ say, scope = "admin" }: { say: Say; scope?
                 {chosen.code
                   ? `${office && chosen.dealer ? `${chosen.dealer}: ` : ""}${chosen.name}. Every shelf code here starts with ${chosen.code}, like ${chosen.code}-1-07-12.`
                   : office
-                    ? `${chosen.name} has no short code yet. Give it one in Settings first.`
+                    ? `${chosen.name} has no short code yet. Give it one under Dealers, Dealers and locations first.`
                     : `${chosen.name} has no short code yet. Ask Backroad Iron to set one.`}
               </p>
             )}

@@ -46,6 +46,29 @@ a { color: inherit; }
 .cartbtn { display: inline-flex; align-items: center; gap: 8px; margin-left: 6px; padding: 8px 12px; border: 0; border-radius: 3px; background: var(--zinc); color: var(--on-zinc); font-weight: 600; cursor: pointer; }
 .count { min-width: 1.6em; padding: 0 5px; border-radius: 999px; background: var(--on-zinc); color: var(--zinc); font: 600 .8rem/1.6 var(--mono); text-align: center; }
 .top :focus-visible { outline-color: var(--zinc); }
+/* back-office header: groups on top, the open group's pages on the row under it */
+.admin-top .wrap { gap: 4px 16px; }
+.admin-top .nav-groups { order: 2; flex: 1 1 auto; gap: 2px; }
+.admin-top .nav-util { order: 3; display: flex; align-items: center; gap: 2px; }
+.admin-top .tab, .admin-top .nav-util a { min-height: 48px; display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; color: inherit; text-decoration: none; font: inherit; font-weight: 500; border: 0; border-bottom: 3px solid transparent; background: none; cursor: pointer; white-space: nowrap; }
+.admin-top .nav-util a, .admin-top .nav-util .tab { opacity: .85; font-size: .95rem; }
+.admin-top .nav-groups .tab { font-weight: 700; letter-spacing: .01em; }
+.admin-top .nav-groups [aria-current] { border-bottom-color: var(--zinc); background: color-mix(in srgb, var(--on-lid) 12%, transparent); }
+.admin-top .tab:hover, .admin-top .nav-util a:hover { background: color-mix(in srgb, var(--on-lid) 8%, transparent); opacity: 1; }
+.admin-top .nav-sub { background: color-mix(in srgb, var(--on-lid) 12%, var(--lid)); }
+.admin-top .nav-sub .wrap { padding-top: 0; padding-bottom: 0; }
+.admin-top .nav-sub nav { gap: 2px; }
+.admin-top .nav-sub [aria-current="page"] { border-bottom-color: var(--zinc); font-weight: 700; }
+@media (max-width: 760px) {
+  .admin-top .wrap { padding-top: 6px; padding-bottom: 0; }
+  .admin-top .nav-util { order: 1; margin-left: auto; }
+  .admin-top .nav-groups { order: 2; flex: 1 0 100%; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0; }
+  .admin-top .nav-groups .tab { justify-content: center; padding: 8px 2px; font-size: .95rem; }
+  .admin-top .nav-groups .count { min-width: 1.4em; padding: 0 3px; }
+  /* One line that slides sideways, so the header stays short on a phone. */
+  .admin-top .nav-sub nav { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; }
+  .admin-top .nav-sub .tab { flex: none; padding: 8px 12px; }
+}
 .notice { background: var(--hold-bg); color: var(--hold); border-bottom: 1px solid var(--rule); padding: 10px 0; font-weight: 500; }
 
 /* lead */

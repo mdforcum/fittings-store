@@ -26,6 +26,18 @@ later.
 Products are entered once, in Inventory. Nothing is maintained inside Stripe or
 Shippo.
 
+## Back office layout (`/admin`)
+
+The header has five groups, and the row under it shows the pages of the group that is open:
+
+- **Sell**: Orders, Counter sale, Quotes, Hoses. A number on Sell is how many paid orders are waiting to ship.
+- **Stock**: Inventory, Running low, Shelf map, Space mapper, Survey.
+- **Catalog**: Machines, Supplier photos.
+- **Dealers**: Dealers and locations (dealers, locations, logins, order routing, real mileage, dealer shipping labels), Dealer pay.
+- **Settings**: payments, store details, shipping and tax, ship-from address, packages.
+
+Pressing a group goes back to the page last open in it. The address carries the page (`/admin#orders`), so a page can be bookmarked, a reload stays put, and the browser's Back button works. The groups are listed in `lib/admin-nav.ts`.
+
 ## Inventory survey (`/capture` and the Survey tab)
 
 For walking a parts room with a phone: photograph inventory cards and parts bins,
@@ -223,9 +235,9 @@ and everything else are reachable only with the secret key.
 
 ## Running the network day to day (`supabase/add-operations.sql`)
 
-- **Ship-from per location.** Each location can have a street address and phone (Settings, Dealers and locations). A label ships from the location that pulled the most parts for the order, when it has a full address; otherwise from the shop-wide ship-from.
+- **Ship-from per location.** Each location can have a street address and phone (Dealers, Dealers and locations). A label ships from the location that pulled the most parts for the order, when it has a full address; otherwise from the shop-wide ship-from.
 - **Returns and refunds.** Orders, Return or refund (or Cancel and refund on an order still to ship). Parts go back on the shelf they came from, Stripe refunds the card, and each dealer's statement gets a reversing line at its original rates. Stripe keeps its card fee on a refund, so that is not reversed.
-- **Dealer page (`/dealer`).** Staff add logins per dealer in Settings. Dealers see orders with parts on their shelves, check parts off, print the pick list, mark each location's part of an order shipped with tracking, and see their month's statement. The order shows shipped once every location has shipped.
+- **Dealer page (`/dealer`).** Staff add logins per dealer under Dealers, Dealers and locations. Dealers see orders with parts on their shelves, check parts off, print the pick list, mark each location's part of an order shipped with tracking, and see their month's statement. The order shows shipped once every location has shipped.
 - **Dealer page, Stock tab.** A dealer keeps its own shelf counts: set a count, tap Sold 1 for a counter sale, see what's running low at its locations, or load a count spreadsheet (Part number and Qty). It works only on that dealer's locations, and it changes counts only: prices and new parts stay with Backroad Iron, and a spreadsheet row for a part that isn't in the catalog is reported back and left out. Every change lands in the stock history as "Dealer page count by <name>" or a counter sale.
 - **Part finder** (Inventory, Counter sale and the dealer Stock tab). In Inventory a scan or an exact match opens that part's stock with the cursor in "How many", adds the count at the location being worked, then goes back to the box for the next scan; a bin code lists every part kept in that bin. A spreadsheet import can carry a **UPC** column: a barcode that is already linked finds its part without a part number, and a new barcode is linked to the part on its row (a barcode that belongs to another part is flagged and never moved). One box finds a part by a typed or scanned part number, UPC or replaced number (Enter picks an exact match, so a plug-in barcode scanner works as it is), by a bin code (lists every part kept in that bin: one bin can hold several parts), by a few words (numbers match anywhere, a typing slip is forgiven, what's on this shelf ranks first), or from a photo (a barcode in the photo is read on the phone; otherwise the photo is read by AI and shown as a guess to check, never added on its own). After a part is added to a counter sale, the parts sold with it before and the other parts in its bin are offered. An unknown barcode can be linked to a part in the back office (saved as a UPC cross-reference). Dealers see only their own shop's bins and sales and never supplier numbers. Rules are in `lib/lookup.ts`.
 - **Dealer alerts.** Each dealer has alert emails and a cell phone. A paid order that needs parts from a dealer's shelves queues a message; running-low lists go out Mondays. Messages always land in the outbox (Running low tab) and send when Resend or Twilio is set up.
@@ -233,12 +245,12 @@ and everything else are reachable only with the secret key.
 - **Import spreadsheet** (Inventory). A CSV with Part number and Qty (plus Name for new parts and Price) sets counts at one location as a recount, after a preview.
 - **Running low tab.** Parts at or under the low-stock number, or with under about 30 days left at the last 30 days' pace, by location.
 
-- **Dealer shipping labels** (`supabase/add-dealer-labels.sql`). Off until turned on in Settings, Dealers and locations, Dealer shipping labels. A dealer types the package weight and size on an order, sees label prices from the Shippo account, and buys one. The label prints from that location's street address, the tracking fills in, and the charge goes on the dealer's statement as a "Shipping label" line. The markup (a percent, a flat amount per label, or both) lives in the private config under `dealer_labels` and starts at 0, so dealers pay what the label costs. A dealer can always type in tracking from its own carrier account instead. Linking a dealer's own carrier accounts needs a Shippo Platform Account and is not built yet.
+- **Dealer shipping labels** (`supabase/add-dealer-labels.sql`). Off until turned on under Dealers, Dealers and locations, Dealer shipping labels. A dealer types the package weight and size on an order, sees label prices from the Shippo account, and buys one. The label prints from that location's street address, the tracking fills in, and the charge goes on the dealer's statement as a "Shipping label" line. The markup (a percent, a flat amount per label, or both) lives in the private config under `dealer_labels` and starts at 0, so dealers pay what the label costs. A dealer can always type in tracking from its own carrier account instead. Linking a dealer's own carrier accounts needs a Shippo Platform Account and is not built yet.
 
 - **Package prefill.** On the dealer page, the label's weight is filled in from the parts' saved packed weight (Edit item, Details) when every part has one. The box size is filled in only for a single part with a saved box size. The dealer can change both.
 - **Void a label** (`supabase/add-label-voids.sql`). Staff only: Orders, the shipment line, Void label. Shippo is asked for the refund (it can take up to 14 days to confirm; a used label is turned down and nothing changes), the dealer's statement gets a line that gives the charge back, the shipment comes off the order and the order goes back to To ship. Each void is kept in `fittings_label_voids`.
 
-- **Real mileage** (`supabase/add-zip-miles.sql`). When an order is routed to a location, "nearest" means the shortest straight-line distance in miles between the shopper's ZIP code and each location's ZIP code. Load the ZIP code table once in Settings, Dealers and locations, Real mileage (Load ZIP codes). The points come from the open-source `zipcodes` npm package (version 8, BSD licence; its README says the United States list came from federalgovernmentzipcodes.us), kept in `fittings_zip_points`. If a ZIP code is not in the table, or the table is empty, routing falls back to the old rule: same first three ZIP digits, then same state. Nothing changes until the ZIP codes are loaded.
+- **Real mileage** (`supabase/add-zip-miles.sql`). When an order is routed to a location, "nearest" means the shortest straight-line distance in miles between the shopper's ZIP code and each location's ZIP code. Load the ZIP code table once under Dealers, Dealers and locations, Real mileage (Load ZIP codes). The points come from the open-source `zipcodes` npm package (version 8, BSD licence; its README says the United States list came from federalgovernmentzipcodes.us), kept in `fittings_zip_points`. If a ZIP code is not in the table, or the table is empty, routing falls back to the old rule: same first three ZIP digits, then same state. Nothing changes until the ZIP codes are loaded.
 
 Checks: `supabase/test-operations.sql`, `supabase/test-dealer-labels.sql`, `supabase/test-label-voids.sql` and `supabase/test-zip-miles.sql` on a scratch database with every change loaded.
 

@@ -1128,9 +1128,9 @@ function AddLocation({
       {dealer ? (
         <LocationForm key={dealer} dealerId={dealer} isDefault={false} act={act} say={say} onDone={onClose} onSaved={onSaved} />
       ) : (
-        <p className="hint">Add a dealer in Settings first.</p>
+        <p className="hint">Add a dealer under Dealers, Dealers and locations first.</p>
       )}
-      <p className="hint">Dealers, their branded stores and location details are in Settings.</p>
+      <p className="hint">Dealers, their branded stores and location details are under Dealers, Dealers and locations.</p>
     </Modal>
   );
 }

@@ -55,7 +55,7 @@ export default function Statements({ data, act, say }: Props) {
     return (
       <>
         <h1>Dealer statements</h1>
-        <p className="empty">No outside dealers yet. Add one in Settings.</p>
+        <p className="empty">No outside dealers yet. Add one under Dealers, Dealers and locations.</p>
       </>
     );
   }

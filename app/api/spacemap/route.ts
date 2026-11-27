@@ -173,7 +173,7 @@ export async function POST(req: Request) {
       const loc = isId(body.location_id) ? (await storeLocations(db, a.dealerId)).find((l) => l.id === body.location_id) : undefined;
       if (!loc) return bad("Pick one of your locations.");
       if (!loc.code) {
-        return bad(a.kind === "admin" ? "Give this location a short code in Settings first; every shelf code starts with it." : "This location has no short code yet. Ask Backroad Iron to set one.");
+        return bad(a.kind === "admin" ? "Give this location a short code under Dealers, Dealers and locations first; every shelf code starts with it." : "This location has no short code yet. Ask Backroad Iron to set one.");
       }
       const spots = await loadSpots(db);
       const made = await db

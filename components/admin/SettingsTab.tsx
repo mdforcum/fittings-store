@@ -3,9 +3,8 @@ import { useState } from "react";
 import type { AdminData, Mode, ParcelPreset } from "@/lib/admin-types";
 import { SHIP_ZONES, dollars, toCents } from "@/lib/catalog";
 import type { Act, Say } from "../Admin";
-import Locations from "./Locations";
 
-type Props = { data: AdminData; act: Act; say: Say };
+type Props = { data: AdminData; act: Act; say: Say; /** Opens the Dealers and locations page. */ go?: () => void };
 type PresetDraft = { name: string; length: string; width: string; height: string; weight_oz: string };
 
 const draft = (p: ParcelPreset): PresetDraft => ({
@@ -19,7 +18,7 @@ const draft = (p: ParcelPreset): PresetDraft => ({
 const modeText = (m: Mode) => (m === null ? "Not connected" : m === "test" ? "Connected, test mode" : "Connected, live");
 const modeTone = (m: Mode) => (m === null ? "bad" : m === "test" ? "hold" : "ok");
 
-export default function SettingsTab({ data, act, say }: Props) {
+export default function SettingsTab({ data, act, say, go }: Props) {
   const s = data.settings;
   const [store, setStore] = useState({
     store_name: s.store_name,
@@ -357,8 +356,17 @@ export default function SettingsTab({ data, act, say }: Props) {
         </button>
       </p>
 
-      {/* Saved on its own: each location has its own Save button. */}
-      <Locations data={data} act={act} say={say} />
+      <div className="card">
+        <h2>Dealers and locations</h2>
+        <p className="hint">
+          Dealers, their locations and logins, order routing, real mileage and dealer shipping labels now have their own page under Dealers.
+        </p>
+        {go && (
+          <button type="button" className="btn ghost" onClick={go}>
+            Open Dealers and locations
+          </button>
+        )}
+      </div>
     </>
   );
 }

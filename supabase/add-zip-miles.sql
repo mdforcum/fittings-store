@@ -4,7 +4,7 @@
 -- When a Backroad Iron order is routed, the location that fills it was picked
 -- by "same first three ZIP digits, then same state". This adds a table of ZIP
 -- code centers so nearest means the shortest straight-line distance in miles.
--- The table is filled from the back office (Settings, Dealers and locations,
+-- The table is filled from the back office (Dealers, Dealers and locations,
 -- Real mileage) from the open-source "zipcodes" package. Until it is filled,
 -- or for a ZIP that isn't in it, the old rule still applies.
 --
