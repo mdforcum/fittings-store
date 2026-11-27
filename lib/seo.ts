@@ -95,3 +95,26 @@ export const jsonForScript = (data: unknown) => JSON.stringify(data).replace(/</
 export function listable(p: Pick<Product, "price_cents" | "price_mode">): boolean {
   return p.price_mode === "quote" || (p.price_cents ?? 0) > 0;
 }
+
+/** Whether a part can be ordered from its page, and the plain words that say so. */
+export type Availability = {
+  state: "in" | "out" | "unpriced" | "quote";
+  /** The same rule the cart and checkout use: in stock and priced. */
+  canBuy: boolean;
+  headline: string;
+  detail: string;
+  button: string;
+};
+
+export function partAvailability(p: Pick<Product, "qty" | "price_cents" | "price_mode">): Availability {
+  if (p.price_mode === "quote") {
+    return { state: "quote", canBuy: false, headline: "Priced by quote", detail: "This part isn't sold from the cart. Ask for a price and we'll come back with one.", button: "Ask for a price" };
+  }
+  if (p.qty <= 0) {
+    return { state: "out", canBuy: false, headline: "Out of stock", detail: "This part can't be ordered right now.", button: "Out of stock" };
+  }
+  if (!((p.price_cents ?? 0) > 0)) {
+    return { state: "unpriced", canBuy: false, headline: "Not for sale online yet", detail: "This part doesn't have a price yet, so it can't be ordered.", button: "Not available yet" };
+  }
+  return { state: "in", canBuy: true, headline: "In stock", detail: "", button: "Add to cart" };
+}

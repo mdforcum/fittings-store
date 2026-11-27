@@ -177,6 +177,8 @@ Checks: `supabase/test-operations.sql`, `supabase/test-dealer-labels.sql` and `s
 
 Every part has its own page at `/part/<id>`: name, part number, specs, the numbers it replaces, price, stock and an Add to cart button that uses the same cart as the shop. The page's title, description and product data (schema.org, for search engines and AI assistants) are built only from the part's own record: a price or "in stock" is shown only when it is real, quote-only parts carry no price, and supplier numbers stay private. `/sitemap.xml` lists the shop and each part with a price (or sold by quote) for whichever store's address is asked; `/robots.txt` keeps the back office, dealer page, order pages and API out of search. The shop's part window links to the part's page, and `/?item=<id>` opens the shop with that part's window open.
 
+A part page can't be used to get around the shop. A part this store doesn't sell has no page (404). An out-of-stock or unpriced part shows a plain notice and a disabled button, and an unpriced part is kept out of search. Whatever a browser sends, `/api/checkout` checks every line again on the server (in stock after holds, priced, not quote-only) and the database hold checks the store's own stock with the rows locked, so no order is made for a part that can't be sold.
+
 ## Working on it
 
 ```bash

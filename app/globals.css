@@ -646,3 +646,4 @@ dialog.sheet { margin: 0 0 0 auto; width: min(440px, 100%); max-width: 100%; hei
 }
 .po-box .po-guess, .po-done .po-wrong { grid-column: 1 / -1; flex-basis: 100%; margin: 0; }
 @media print { .po-wrong { display: none; } }
+.part-status { border: 1px solid var(--rule); border-left: 4px solid var(--bad); background: var(--bad-bg); padding: 12px 14px; font-size: 1.05rem; }

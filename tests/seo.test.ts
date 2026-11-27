@@ -58,3 +58,17 @@ test("part text can't break out of the data script, and only priced parts are li
   assert.equal(listable({ price_cents: null, price_mode: "cart" }), false);
   assert.equal(listable({ price_cents: null, price_mode: "quote" }), true);
 });
+
+test("a part can be ordered from its page only when it's in stock and priced", async () => {
+  const { partAvailability } = await import("../lib/seo.ts");
+  assert.deepEqual(partAvailability({ qty: 3, price_cents: 500, price_mode: "cart" }), { state: "in", canBuy: true, headline: "In stock", detail: "", button: "Add to cart" });
+  const out = partAvailability({ qty: 0, price_cents: 500, price_mode: "cart" });
+  assert.deepEqual([out.state, out.canBuy, out.headline, out.button], ["out", false, "Out of stock", "Out of stock"]);
+  const noPrice = partAvailability({ qty: 3, price_cents: null, price_mode: "cart" });
+  assert.deepEqual([noPrice.state, noPrice.canBuy, noPrice.button], ["unpriced", false, "Not available yet"]);
+  assert.equal(partAvailability({ qty: 3, price_cents: 0, price_mode: "cart" }).canBuy, false, "a zero price isn't a price");
+  assert.equal(partAvailability({ qty: 0, price_cents: null, price_mode: "cart" }).state, "out");
+  assert.equal(partAvailability({ qty: -2, price_cents: 500, price_mode: "cart" }).canBuy, false);
+  const quote = partAvailability({ qty: 5, price_cents: 900, price_mode: "quote" });
+  assert.deepEqual([quote.state, quote.canBuy, quote.button], ["quote", false, "Ask for a price"], "quote parts never sell from the cart, even with stock and a price on file");
+});

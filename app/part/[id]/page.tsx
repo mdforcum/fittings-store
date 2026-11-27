@@ -9,7 +9,7 @@ import { Picture } from "@/components/ui";
 import { conditionLabel, warrantyText } from "@/lib/browse";
 import { money, photoUrl, stockInfo, typeOf } from "@/lib/catalog";
 import { madeInUSA } from "@/lib/foundation";
-import { jsonForScript, originOf, partDescription, partJsonLd, partPath, partTitle, replaces } from "@/lib/seo";
+import { jsonForScript, originOf, partAvailability, partDescription, partJsonLd, partPath, partTitle, replaces } from "@/lib/seo";
 import { getShopCatalog } from "@/lib/server";
 import { lookStyle } from "@/lib/storefront";
 import { storeForRequest } from "@/lib/storefront-server";
@@ -42,8 +42,8 @@ export async function generateMetadata(props: Props): Promise<Metadata> {
     description,
     ...(origin ? { metadataBase: new URL(origin) } : {}),
     alternates: { canonical: partPath(part.id) },
-    // A staff preview of a store that isn't open yet stays out of search.
-    ...(look?.preview ? { robots: { index: false, follow: false } } : {}),
+    // A staff preview of a store that isn't open yet stays out of search, and so does a part with no price yet.
+    ...(look?.preview || partAvailability(part).state === "unpriced" ? { robots: { index: false, follow: false } } : {}),
     openGraph: { title, description, url: partPath(part.id), siteName: storeName, type: "website", ...(images.length ? { images } : {}) },
   };
 }
@@ -57,6 +57,7 @@ export default async function PartPage(props: Props) {
   const xrefs = catalog.xrefs[part.id] ?? [];
   const rep = replaces(xrefs);
   const stock = stockInfo(part, settings.low_stock);
+  const avail = partAvailability(part);
   const description = partDescription(part, xrefs, storeName);
   const jsonLd = partJsonLd(part, { url: `${origin}${partPath(part.id)}`, storeName, images: part.photos.slice(0, 4).map(photoUrl), xrefs, description });
   const email = look?.email || settings.email;
@@ -102,6 +103,11 @@ export default async function PartPage(props: Props) {
           </div>
           <div className="part-info">
             <h1>{part.name}</h1>
+            {(avail.state === "out" || avail.state === "unpriced") && (
+              <p className="part-status" role="status">
+                <b>{avail.headline}.</b> {avail.detail}
+              </p>
+            )}
             <dl className="specs">
               {part.part_number && (
                 <>
@@ -188,7 +194,7 @@ export default async function PartPage(props: Props) {
                 Ask for a price
               </Link>
             ) : (
-              <PartBuy id={part.id} name={part.name} qty={part.qty} priced={(part.price_cents ?? 0) > 0} cartHref={`/${suffix ? `${suffix}&` : "?"}cart=open`} />
+              <PartBuy id={part.id} name={part.name} qty={part.qty} canBuy={avail.canBuy} label={avail.button} cartHref={`/${suffix ? `${suffix}&` : "?"}cart=open`} />
             )}
             {email && (
               <p className="hint">
