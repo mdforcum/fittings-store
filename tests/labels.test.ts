@@ -42,3 +42,14 @@ test("a quote token buys only the price that was offered, for that order and loc
   assert.equal(readQuote("junk", key, "o1", "l1", 1_000), null);
   assert.equal(readQuote(`${token}.x`, key, "o1", "l1", 1_000), null);
 });
+
+test("the package is guessed only from what the parts' records say", async () => {
+  const { packageGuess } = await import("../lib/labels.ts");
+  const none = { weight_oz: null, length_in: null, width_in: null, height_in: null };
+  assert.deepEqual(packageGuess([]), { weight_lb: "", length: "", width: "", height: "" });
+  assert.deepEqual(packageGuess([{ qty: 1, weight_oz: 20, length_in: 8, width_in: 6, height_in: 4 }]), { weight_lb: "1.3", length: "8", width: "6", height: "4" }, "one part: its own weight and box, weight rounded up");
+  assert.deepEqual(packageGuess([{ qty: 2, weight_oz: 20, length_in: 8, width_in: 6, height_in: 4 }]), { weight_lb: "2.5", length: "", width: "", height: "" }, "two of a part: weight adds up, box is left blank");
+  assert.deepEqual(packageGuess([{ qty: 1, ...none, weight_oz: 16, length_in: 5 }, { qty: 3, ...none, weight_oz: 8 }]).weight_lb, "2.5");
+  assert.deepEqual(packageGuess([{ qty: 1, ...none, weight_oz: 16 }, { qty: 1, ...none }]), { weight_lb: "", length: "", width: "", height: "" }, "a part with no weight: no guess at all");
+  assert.equal(packageGuess([{ qty: 1, ...none, weight_oz: 16 * 200 }]).weight_lb, "", "too heavy for parcel: left blank");
+});

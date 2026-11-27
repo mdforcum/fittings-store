@@ -3,7 +3,7 @@
 import { sameOrigin } from "@/lib/auth";
 import { currentDealer, dealerSignIn, dealerSignOut, type DealerSession } from "@/lib/dealer-session";
 import type { ShipFrom } from "@/lib/admin-types";
-import { LABELS_KEY, QUOTE_MINUTES, labelCharge, parcelFrom, quoteKey, readLabels, readQuote, signQuote } from "@/lib/labels";
+import { LABELS_KEY, QUOTE_MINUTES, labelCharge, packageGuess, parcelFrom, quoteKey, readLabels, readQuote, signQuote, type PartShipping } from "@/lib/labels";
 import { locationShipFrom } from "@/lib/operations";
 import { normalizeLocation } from "@/lib/places";
 import { monthOf, monthRange, readSettlement } from "@/lib/settlements";
@@ -30,6 +30,8 @@ export type PortalOrder = {
   /** Only the parts this dealer pulls, by location. */
   lines: Array<{ product_id: string; name: string; part_number: string; qty: number; location_id: string }>;
   shipped: Array<{ location_id: string; carrier: string; tracking_number: string; shipped_at: string; has_label: boolean }>;
+  /** A starting package for each location, from the parts' saved weight and box size. Blank where unknown. */
+  packages: Record<string, { weight_lb: string; length: string; width: string; height: string }>;
 };
 
 /** A label price offered to the dealer; the token buys it. */
@@ -85,6 +87,26 @@ async function load(db: SupabaseClient, s: DealerSession): Promise<PortalData> {
     shipments(),
   ]);
   const shipRows = (sh.error ? [] : (sh.data ?? [])) as unknown as Array<Record<string, unknown>>;
+  // Saved shipping details for the parts on these orders (blank when a part has none).
+  const partIds = [...new Set((al.data ?? []).map((a) => a.product_id as string))];
+  const pd = partIds.length ? await db.from("fittings_products").select("id, weight_oz, length_in, width_in, height_in").in("id", partIds.slice(0, 1000)) : { data: [], error: null };
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : typeof v === "string" && v !== "" && Number.isFinite(Number(v)) ? Number(v) : null);
+  const details = new Map<string, Omit<PartShipping, "qty">>();
+  for (const p of (pd.error ? [] : (pd.data ?? [])) as Array<Record<string, unknown>>) {
+    details.set(String(p.id), { weight_oz: num(p.weight_oz), length_in: num(p.length_in), width_in: num(p.width_in), height_in: num(p.height_in) });
+  }
+  const packagesFor = (orderId: string) => {
+    const out: PortalOrder["packages"] = {};
+    for (const a of al.data ?? []) {
+      if (a.order_id !== orderId) continue;
+      const loc = a.location_id as string;
+      const lines = (al.data ?? [])
+        .filter((x) => x.order_id === orderId && x.location_id === loc)
+        .map((x) => ({ qty: x.qty as number, ...(details.get(x.product_id as string) ?? { weight_oz: null, length_in: null, width_in: null, height_in: null }) }));
+      out[loc] ??= packageGuess(lines);
+    }
+    return out;
+  };
   const orders = ((o.data ?? []) as Array<Record<string, unknown> & { items: Array<{ product_id: string; name: string; part_number: string | null }> }>).map(
     (r): PortalOrder => ({
       id: r.id as string,
@@ -111,6 +133,7 @@ async function load(db: SupabaseClient, s: DealerSession): Promise<PortalData> {
           shipped_at: x.shipped_at as string,
           has_label: typeof x.shippo_transaction_id === "string" && x.shippo_transaction_id !== "",
         })),
+      packages: packagesFor(r.id as string),
     }),
   );
   return { ...base, orders };

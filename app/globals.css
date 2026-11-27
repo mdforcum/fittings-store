@@ -644,3 +644,5 @@ dialog.sheet { margin: 0 0 0 auto; width: min(440px, 100%); max-width: 100%; hei
   .part-info h1 { font-size: 1.6rem; }
   .part-buy .btn, .part-info > .btn { width: 100%; }
 }
+.po-box .po-guess, .po-done .po-wrong { grid-column: 1 / -1; flex-basis: 100%; margin: 0; }
+@media print { .po-wrong { display: none; } }

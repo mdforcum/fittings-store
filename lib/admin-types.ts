@@ -102,7 +102,18 @@ export type Order = {
   shipments?: Shipment[];
 };
 
-export type Shipment = { location_id: string; carrier: string; tracking_number: string; tracking_url: string; shipped_by: string; shipped_at: string };
+export type Shipment = {
+  location_id: string;
+  carrier: string;
+  tracking_number: string;
+  tracking_url: string;
+  shipped_by: string;
+  shipped_at: string;
+  /** A label was bought here (not just tracking typed in). */
+  has_label?: boolean;
+  /** What the dealer was charged for that label. */
+  label_charge_cents?: number | null;
+};
 
 export type CoreReturn = {
   id: number;

@@ -88,6 +88,20 @@ function OrderCard({ o, data, act, say }: { o: Order; data: AdminData; act: Act;
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [rateFrom, setRateFrom] = useState("");
   const [returning, setReturning] = useState<"" | "return" | "cancel">("");
+  const [voiding, setVoiding] = useState("");
+
+  async function voidLabel(loc: string) {
+    if (voiding !== loc) return setVoiding(loc);
+    setVoiding("busy");
+    const done = await act("label.void", { order_id: o.id, location_id: loc });
+    setVoiding("");
+    if (done) {
+      const credit = Number(done.credit_cents ?? 0);
+      say(
+        `Label voided. ${done.refund_status === "SUCCESS" ? "Shippo refunded it." : "Shippo will confirm the refund, which can take up to 14 days."}${credit ? ` ${money(credit)} went back on the dealer's statement.` : ""} The order is back in To ship.`,
+      );
+    }
+  }
   const opsOn = !!data.ops?.ready;
   const shippoOn = data.integrations.shippo !== null;
   const pieces = o.items.reduce((n, i) => n + i.qty, 0);
@@ -282,6 +296,14 @@ function OrderCard({ o, data, act, say }: { o: Order; data: AdminData; act: Act;
             <li key={sh.location_id}>
               {data.places.locations.find((l) => l.id === sh.location_id)?.name ?? "A location"}: {sh.carrier} <span className="mono">{sh.tracking_number}</span>
               {sh.shipped_by ? ` · by ${sh.shipped_by}` : ""} · {when(sh.shipped_at)}
+              {sh.has_label && (
+                <>
+                  {sh.label_charge_cents != null ? ` · label ${money(sh.label_charge_cents)}` : " · label bought here"}{" "}
+                  <button type="button" className="btn ghost sm" disabled={voiding === "busy"} onClick={() => voidLabel(sh.location_id)}>
+                    {voiding === sh.location_id ? "Tap again to void this label" : voiding === "busy" ? "Voiding…" : "Void label"}
+                  </button>
+                </>
+              )}
             </li>
           ))}
         </ul>

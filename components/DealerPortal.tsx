@@ -112,7 +112,9 @@ function ShipStop({ o, loc, labels, onShip, onBought }: { o: PortalOrder; loc: s
   const [mode, setMode] = useState<"label" | "tracking">(labels && !pickup ? "label" : "tracking");
   const [carrier, setCarrier] = useState("UPS");
   const [tracking, setTracking] = useState("");
-  const [box, setBox] = useState({ weight_lb: "", length: "", width: "", height: "" });
+  const guess = o.packages?.[loc];
+  const [box, setBox] = useState({ weight_lb: guess?.weight_lb ?? "", length: guess?.length ?? "", width: guess?.width ?? "", height: guess?.height ?? "" });
+  const guessed = !!guess && (guess.weight_lb !== "" || guess.length !== "");
   const [quotes, setQuotes] = useState<PortalQuote[] | null>(null);
   const [from, setFrom] = useState("");
   const [pick, setPick] = useState("");
@@ -179,6 +181,12 @@ function ShipStop({ o, loc, labels, onShip, onBought }: { o: PortalOrder; loc: s
             Height, in
             <input id={`h-${id}`} inputMode="decimal" autoComplete="off" value={box.height} onChange={setDim("height")} />
           </label>
+          {guessed && (
+            <p className="hint po-guess">
+              {guess.length ? "Weight and box size" : "Weight"} filled in from the part{o.lines.filter((l) => l.location_id === loc).length === 1 ? "'s" : "s'"} saved details. Weigh the packed
+              box and change it if it&apos;s off.
+            </p>
+          )}
           {!quotes && (
             <button type="submit" className="btn" disabled={!!busy || !box.weight_lb || !box.length || !box.width || !box.height}>
               {busy === "rates" ? "Getting rates…" : "Get label rates"}
@@ -297,6 +305,7 @@ function OrderCard({ o, locations, labels, onShip, onBought }: { o: PortalOrder;
                   {done.carrier === "Picked up" ? "Picked up" : `Shipped ${done.carrier} ${done.tracking_number}`} on {new Date(done.shipped_at).toLocaleDateString("en-US")}
                 </p>
                 {done.has_label && <LabelLink orderId={o.id} loc={loc} />}
+                {done.has_label && <p className="hint po-wrong">Bought the wrong label? Email Backroad Iron and we&apos;ll void it.</p>}
               </div>
             ) : (
               <ShipStop o={o} loc={loc} labels={labels} onShip={onShip} onBought={onBought} />

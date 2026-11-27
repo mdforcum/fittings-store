@@ -124,6 +124,18 @@ export async function buyLabel(rateId: string, format: "PDF" | "PDF_4x6") {
   };
 }
 
+export type RefundStatus = "QUEUED" | "PENDING" | "SUCCESS" | "ERROR";
+
+/**
+ * Asks Shippo to refund an unused label. QUEUED and PENDING mean the carrier
+ * hasn't answered yet (it can take up to 14 days); ERROR means the label
+ * looks used and the refund was turned down.
+ */
+export async function refundLabel(transactionId: string): Promise<RefundStatus> {
+  const r = await shippo<{ status?: string }>("/refunds/", { method: "POST", body: { transaction: transactionId, async: false } });
+  return (["QUEUED", "PENDING", "SUCCESS", "ERROR"] as const).find((s) => s === r.status) ?? "ERROR";
+}
+
 /** Label links expire, so fetch a fresh one each time the label is opened. */
 export async function freshLabelUrl(transactionId: string): Promise<string> {
   const tx = await shippo<Transaction>(`/transactions/${encodeURIComponent(transactionId)}`);

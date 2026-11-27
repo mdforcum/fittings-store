@@ -126,7 +126,7 @@ async function loadData(db: SupabaseClient): Promise<AdminData> {
       ? db.from("fittings_returns").select("order_id, product_id, qty").in("order_id", orderIds)
       : db.from("fittings_returns").select("order_id").limit(1),
     orderIds.length
-      ? db.from("fittings_shipments").select("order_id, location_id, carrier, tracking_number, tracking_url, shipped_by, shipped_at").in("order_id", orderIds)
+      ? db.from("fittings_shipments").select("*").in("order_id", orderIds)
       : Promise.resolve({ data: [], error: null }),
     // Dealer labels came with supabase/add-dealer-labels.sql.
     db.from("fittings_shipments").select("shippo_transaction_id").limit(1),
@@ -142,9 +142,22 @@ async function loadData(db: SupabaseClient): Promise<AdminData> {
     returnedBy.set(r.order_id, list);
   }
   const shippedBy = new Map<string, Shipment[]>();
-  for (const r of sh.error ? [] : ((sh.data ?? []) as Array<Shipment & { order_id: string }>)) {
-    const { order_id, ...rest } = r;
-    shippedBy.set(order_id, [...(shippedBy.get(order_id) ?? []), rest]);
+  for (const r of sh.error ? [] : ((sh.data ?? []) as Array<Record<string, unknown>>)) {
+    const order_id = String(r.order_id);
+    const text = (v: unknown) => (typeof v === "string" ? v : "");
+    shippedBy.set(order_id, [
+      ...(shippedBy.get(order_id) ?? []),
+      {
+        location_id: text(r.location_id),
+        carrier: text(r.carrier),
+        tracking_number: text(r.tracking_number),
+        tracking_url: text(r.tracking_url),
+        shipped_by: text(r.shipped_by),
+        shipped_at: text(r.shipped_at),
+        has_label: typeof r.shippo_transaction_id === "string" && r.shippo_transaction_id !== "",
+        label_charge_cents: typeof r.label_charge_cents === "number" ? r.label_charge_cents : null,
+      },
+    ]);
   }
   const placesReady = !dl.error && !lo.error && !oh.error;
   const fromBy = new Map<string, Allocation[]>();

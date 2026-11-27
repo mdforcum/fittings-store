@@ -95,3 +95,30 @@ export function readQuote(token: string, key: Buffer, orderId: string, locationI
   if (typeof q.rate_id !== "string" || !q.rate_id) return null;
   return q;
 }
+
+/** A part's saved shipping details, as far as they are filled in. */
+export type PartShipping = { qty: number; weight_oz: number | null; length_in: number | null; width_in: number | null; height_in: number | null };
+
+/**
+ * A starting point for the package boxes, from the parts' saved details.
+ * Weight: the parts added up, only when every part has one. Box size: only
+ * for a single part, since nobody can guess how several parts get packed.
+ * Blank strings mean "the dealer fills this in".
+ */
+export function packageGuess(lines: PartShipping[]): { weight_lb: string; length: string; width: string; height: string } {
+  const blank = { weight_lb: "", length: "", width: "", height: "" };
+  if (!lines.length) return blank;
+  const out = { ...blank };
+  if (lines.every((l) => l.qty > 0 && typeof l.weight_oz === "number" && l.weight_oz > 0)) {
+    const oz = lines.reduce((s, l) => s + l.qty * (l.weight_oz as number), 0);
+    const lb = Math.ceil((oz / 16) * 10) / 10;
+    if (lb <= MAX_POUNDS) out.weight_lb = String(lb);
+  }
+  const only = lines.length === 1 && lines[0].qty === 1 ? lines[0] : null;
+  if (only && [only.length_in, only.width_in, only.height_in].every((d) => typeof d === "number" && d > 0 && d <= MAX_INCHES)) {
+    out.length = String(only.length_in);
+    out.width = String(only.width_in);
+    out.height = String(only.height_in);
+  }
+  return out;
+}

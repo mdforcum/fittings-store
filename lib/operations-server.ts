@@ -7,6 +7,7 @@ import { counterLines, IMPORT_LIMIT, okEmail, refundFor, runningLow, stillOut, t
 import { LABELS_KEY, MAX_FLAT_CENTS, MAX_MARKUP_BPS, readLabels } from "./labels";
 import { hashPassword, passwordProblem } from "./passwords";
 import { env, setConfig } from "./server";
+import { refundLabel, type RefundStatus } from "./shippo";
 import { getStripe } from "./payments";
 import { onhandMap } from "./places";
 import { emailReady, queueLowStock, sendQueued, textReady } from "./notify";
@@ -285,6 +286,25 @@ export async function runOps(action: string, a: Payload, db: SupabaseClient): Pr
       const next = { on: a.on === true, markup_bps: bps as number, flat_cents: flat as number };
       await setConfig(db, LABELS_KEY, next);
       return { labels: next };
+    }
+
+    case "label.void": {
+      if (!isId(a.order_id) || !isId(a.location_id)) fail("Pick the shipment.");
+      const sh = await db.from("fittings_shipments").select("*").eq("order_id", a.order_id as string).eq("location_id", a.location_id as string).maybeSingle();
+      const tx = sh.error ? null : ((sh.data?.shippo_transaction_id as string | null | undefined) ?? null);
+      if (!tx) fail("There's no bought label on this shipment. A tracking number that was typed in can be changed by moving the order back to To ship.");
+      const probe = await db.from("fittings_label_voids").select("id").limit(1);
+      if (missing(probe.error)) fail("Run supabase/add-label-voids.sql in the Supabase SQL Editor first.");
+      let status: RefundStatus;
+      try {
+        status = await refundLabel(tx as string);
+      } catch (e) {
+        return fail(`Shippo didn't take the refund request, so nothing changed: ${(e as Error).message}`);
+      }
+      if (status === "ERROR") fail("Shippo turned the refund down: the label looks used. Nothing changed.");
+      const r = await db.rpc("fittings_void_label", { p_order_id: a.order_id, p_location: a.location_id, p_refund_status: status, p_by: str(a.by, 80) || "Back office", p_reason: str(a.reason, 200) });
+      if (r.error) fail(`Shippo took the refund request, but the void wasn't saved here: ${r.error.message}. Tell Matt before trying again.`);
+      return { refund_status: status, credit_cents: (r.data as { credit_cents?: number } | null)?.credit_cents ?? 0 };
     }
 
     // Alert outbox ----------------------------------------------------------------------------------

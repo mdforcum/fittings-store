@@ -168,7 +168,10 @@ and everything else are reachable only with the secret key.
 
 - **Dealer shipping labels** (`supabase/add-dealer-labels.sql`). Off until turned on in Settings, Dealers and locations, Dealer shipping labels. A dealer types the package weight and size on an order, sees label prices from the Shippo account, and buys one. The label prints from that location's street address, the tracking fills in, and the charge goes on the dealer's statement as a "Shipping label" line. The markup (a percent, a flat amount per label, or both) lives in the private config under `dealer_labels` and starts at 0, so dealers pay what the label costs. A dealer can always type in tracking from its own carrier account instead. Linking a dealer's own carrier accounts needs a Shippo Platform Account and is not built yet.
 
-Checks: `supabase/test-operations.sql` and `supabase/test-dealer-labels.sql` on a scratch database with every change loaded.
+- **Package prefill.** On the dealer page, the label's weight is filled in from the parts' saved packed weight (Edit item, Details) when every part has one. The box size is filled in only for a single part with a saved box size. The dealer can change both.
+- **Void a label** (`supabase/add-label-voids.sql`). Staff only: Orders, the shipment line, Void label. Shippo is asked for the refund (it can take up to 14 days to confirm; a used label is turned down and nothing changes), the dealer's statement gets a line that gives the charge back, the shipment comes off the order and the order goes back to To ship. Each void is kept in `fittings_label_voids`.
+
+Checks: `supabase/test-operations.sql`, `supabase/test-dealer-labels.sql` and `supabase/test-label-voids.sql` on a scratch database with every change loaded.
 
 ## Part pages for search (`/part/<id>`)
 
