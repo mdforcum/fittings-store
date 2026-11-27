@@ -4,7 +4,8 @@ import { sameOrigin } from "@/lib/auth";
 import { currentDealer, dealerSignIn, dealerSignOut, type DealerSession } from "@/lib/dealer-session";
 import type { ShipFrom } from "@/lib/admin-types";
 import { LABELS_KEY, QUOTE_MINUTES, labelCharge, packageGuess, parcelFrom, quoteKey, readLabels, readQuote, signQuote, type PartShipping } from "@/lib/labels";
-import { locationShipFrom } from "@/lib/operations";
+import { IMPORT_LIMIT, locationShipFrom, runningLow, type LowLine } from "@/lib/operations";
+import { onhandMap } from "@/lib/places";
 import { normalizeLocation } from "@/lib/places";
 import { monthOf, monthRange, readSettlement } from "@/lib/settlements";
 import { adminDb, env, getConfig, json } from "@/lib/server";
@@ -32,6 +33,14 @@ export type PortalOrder = {
   shipped: Array<{ location_id: string; carrier: string; tracking_number: string; shipped_at: string; has_label: boolean }>;
   /** A starting package for each location, from the parts' saved weight and box size. Blank where unknown. */
   packages: Record<string, { weight_lb: string; length: string; width: string; height: string }>;
+};
+
+/** The dealer's own shelves: the catalog, the counts at its locations, and what's running low there. */
+export type PortalStock = {
+  products: Array<{ id: string; name: string; part_number: string; price_cents: number | null }>;
+  /** part → location → count, for this dealer's locations only. */
+  onhand: Record<string, Record<string, number>>;
+  low: LowLine[];
 };
 
 /** A label price offered to the dealer; the token buys it. */
@@ -166,7 +175,85 @@ async function labelSetup(db: SupabaseClient, s: DealerSession, a: Payload) {
   return { settings, order: o, to: o.ship_to, location: normalizeLocation(loc.data as Record<string, unknown>) };
 }
 
+async function myLocations(db: SupabaseClient, s: DealerSession): Promise<Array<{ id: string; active: boolean }>> {
+  const lo = await db.from("fittings_locations").select("id, active").eq("dealer_id", s.dealer.id).eq("kind", "store");
+  return ((lo.data ?? []) as Array<{ id: string; active?: boolean }>).map((l) => ({ id: l.id, active: l.active !== false }));
+}
+
+async function loadStock(db: SupabaseClient, s: DealerSession): Promise<PortalStock> {
+  const locs = await myLocations(db, s);
+  const mine = locs.map((l) => l.id);
+  if (!mine.length) return { products: [], onhand: {}, low: [] };
+  const since = new Date(Date.now() - 30 * 86400_000).toISOString();
+  const [p, oh, mv, st] = await Promise.all([
+    db.from("fittings_products").select("id, name, part_number, price_cents").order("sort").limit(5000),
+    db.from("fittings_onhand").select("product_id, location_id, qty").in("location_id", mine).limit(50000),
+    db.from("fittings_stock_moves").select("product_id, location_id, delta").eq("kind", "sale").in("location_id", mine).gte("created_at", since).limit(50000),
+    db.from("fittings_settings").select("low_stock").eq("id", 1).maybeSingle(),
+  ]);
+  const products = ((p.data ?? []) as Array<Record<string, unknown>>).map((r) => ({
+    id: String(r.id),
+    name: typeof r.name === "string" ? r.name : "",
+    part_number: typeof r.part_number === "string" ? r.part_number : "",
+    price_cents: typeof r.price_cents === "number" ? r.price_cents : null,
+  }));
+  const onhand = onhandMap((oh.error ? [] : (oh.data ?? [])) as Array<{ product_id: unknown; location_id: unknown; qty: unknown }>);
+  const sold: Record<string, Record<string, number>> = {};
+  for (const m of mv.error ? [] : (mv.data ?? [])) {
+    if (!m.location_id) continue;
+    const row = (sold[m.product_id as string] ??= {});
+    row[m.location_id as string] = (row[m.location_id as string] ?? 0) - (m.delta as number);
+  }
+  const low = runningLow(products, onhand, sold, locs, Number((st.data as { low_stock?: number } | null)?.low_stock ?? 2));
+  return { products, onhand, low };
+}
+
 async function run(action: string, a: Payload, db: SupabaseClient, s: DealerSession): Promise<Response | null> {
+  // The dealer's own shelves -------------------------------------------------------------
+  if (action === "stock.load") return json({ ok: true, result: { stock: await loadStock(db, s) } });
+
+  if (action === "stock.count" || action === "stock.sold") {
+    if (!isId(a.location_id)) return bad("Pick the location.");
+    if (!(await myLocations(db, s)).some((l) => l.id === a.location_id)) return bad("That isn't one of your locations.", 403);
+    const who = s.user.name || s.user.email;
+
+    if (action === "stock.count") {
+      const raw = Array.isArray(a.lines) ? (a.lines as Payload[]) : [];
+      if (!raw.length) return bad("There's nothing to save.");
+      if (raw.length > IMPORT_LIMIT) return bad(`Save up to ${IMPORT_LIMIT} counts at a time.`);
+      const lines = raw.map((l) => ({ product_id: str(l?.product_id, 80), qty: typeof l?.qty === "number" && Number.isInteger(l.qty) ? l.qty : -1 }));
+      if (lines.some((l) => !l.product_id || l.qty < 0 || l.qty > 100000)) return bad("Every count must be a whole number, 0 or more.");
+      // Counts only: a dealer can't change a price or add a part to the catalog here.
+      const r = await db.rpc("fittings_import_counts", {
+        p_location: a.location_id,
+        p_lines: lines.map((l) => ({ product_id: l.product_id, qty: l.qty, price_cents: null })),
+        p_note: `Dealer page count by ${who}`.slice(0, 120),
+      });
+      if (r.error) {
+        return bad(/no item/.test(r.error.message) ? "One of those parts isn't in the catalog. Email Backroad Iron to add it." : "The counts didn't save. Try again.");
+      }
+      return json({ ok: true, result: { changed: r.data, stock: await loadStock(db, s) } });
+    }
+
+    const pid = str(a.product_id, 80);
+    const qty = typeof a.qty === "number" && Number.isInteger(a.qty) ? a.qty : 0;
+    if (!pid || qty < 1 || qty > 1000) return bad("Enter how many were sold.");
+    const pr = await db.from("fittings_products").select("price_cents").eq("id", pid).maybeSingle();
+    if (pr.error || !pr.data) return bad("That part isn't in the catalog.");
+    const r = await db.rpc("fittings_counter_sale", {
+      p_location: a.location_id,
+      p_lines: [{ product_id: pid, qty, price_cents: typeof pr.data.price_cents === "number" ? pr.data.price_cents : 0 }],
+      p_paid_by: "",
+      p_note: "Dealer page",
+      p_by: who,
+    });
+    if (r.error) {
+      const m = /only (\d+) of/.exec(r.error.message);
+      return bad(m ? `Only ${m[1]} on this shelf. Set the count first if that's wrong.` : "The sale didn't save. Try again.");
+    }
+    return json({ ok: true, result: { sale_id: r.data, stock: await loadStock(db, s) } });
+  }
+
   if (action === "label.rates") {
     const setup = await labelSetup(db, s, a);
     if (setup instanceof Response) return setup;

@@ -184,3 +184,18 @@ test("dealer session tokens: signed, expiring, and tied to the password", () => 
   assert.ok(!tokenSigned(t.replace(/\.\d+\./, ".2100000000000."), tag, key), "a changed expiry breaks the signature");
   assert.equal(tokenUser("junk", 0), null);
 });
+
+test("a dealer's spreadsheet changes counts only, for parts already in the catalog", async () => {
+  const { dealerCountLines } = await import("../lib/operations.ts");
+  const products = [
+    { id: "elbow", name: "Elbow", part_number: "6400-08-08" },
+    { id: "tee", name: "Tee", part_number: "T-1" },
+  ];
+  const rows = parseCsv("Part number,Name,Qty,Price\n6400-08-08,,5,99.00\nT-1,,2,\nNEW-1,New cap,2,4.50\nNEW-2,,1,\n,Nothing,1,\nT-1,,7,\n6400-08-08,,x,\n");
+  const { lines } = importPlan(rows, products, { elbow: { L1: 3 }, tee: { L1: 2 } }, "L1");
+  const out = dealerCountLines(lines);
+  assert.deepEqual(out.apply, [{ product_id: "elbow", qty: 5 }], "the price column is ignored: only the count goes through");
+  assert.equal(out.same, 1);
+  assert.deepEqual(out.unknown.map((l) => l.part_number), ["NEW-1", "NEW-2"], "new parts are reported, never added");
+  assert.deepEqual(out.bad.map((l) => l.row), [6, 7, 8], "no part number, a repeat, and a bad count are left out");
+});

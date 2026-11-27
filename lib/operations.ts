@@ -246,6 +246,28 @@ export function importSummary(lines: ImportLine[]): { update: number; add: numbe
   return s;
 }
 
+/**
+ * What a dealer's count spreadsheet may change: counts only, for parts already
+ * in the catalog. New parts and prices are Backroad Iron's to set, so those
+ * rows are reported back and left out.
+ */
+export function dealerCountLines(lines: ImportLine[]): { apply: Array<{ product_id: string; qty: number }>; unknown: ImportLine[]; bad: ImportLine[]; same: number } {
+  const apply: Array<{ product_id: string; qty: number }> = [];
+  const unknown: ImportLine[] = [];
+  const bad: ImportLine[] = [];
+  let same = 0;
+  for (const l of lines) {
+    if (!l.product_id) {
+      // "New part: give it a name" is importPlan's own complaint about a part it can't match.
+      if (l.part_number && (!l.problem || l.problem.startsWith("New part"))) unknown.push(l);
+      else bad.push(l);
+    } else if (l.problem || l.qty == null) bad.push(l);
+    else if (l.qty === l.now) same++;
+    else apply.push({ product_id: l.product_id, qty: l.qty });
+  }
+  return { apply, unknown, bad, same };
+}
+
 // Running low ----------------------------------------------------------------------------
 
 export type LowLine = {

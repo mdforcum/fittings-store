@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { PortalData, PortalOrder, PortalQuote } from "@/app/api/dealer/route";
 import { money } from "@/lib/catalog";
+import DealerStock from "./DealerStock";
 import { KIND_LABEL, monthName, monthOf, totals, type SettlementRow } from "@/lib/settlements";
 
 type Reply = { ok: boolean; message?: string; data?: PortalData; result?: Record<string, unknown> };
@@ -391,7 +392,7 @@ export default function DealerPortal() {
   const [data, setData] = useState<PortalData | null>(null);
   const [state, setState] = useState<"loading" | "out" | "in" | "error">("loading");
   const [message, setMessage] = useState("");
-  const [view, setView] = useState<"open" | "done" | "statement">("open");
+  const [view, setView] = useState<"open" | "done" | "stock" | "statement">("open");
   const [bought, setBought] = useState<Bought | null>(null);
 
   const load = useCallback(async () => {
@@ -466,6 +467,7 @@ export default function DealerPortal() {
           [
             ["open", `To pull (${open.length})`],
             ["done", "Done"],
+            ["stock", "Stock"],
             ["statement", "Statement"],
           ] as const
         ).map(([k, label]) => (
@@ -492,7 +494,9 @@ export default function DealerPortal() {
           )}
         </div>
       )}
-      {view === "statement" ? (
+      {view === "stock" ? (
+        <DealerStock locations={data.locations} supportEmail={data.support_email} call={call} />
+      ) : view === "statement" ? (
         <Statement />
       ) : list.length === 0 ? (
         <p className="empty">{view === "open" ? "Nothing to pull right now. New orders show up here, and you'll get an alert if one is set up." : "No finished orders in the last 90 days."}</p>
