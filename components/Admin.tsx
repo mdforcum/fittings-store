@@ -12,6 +12,7 @@ import Orders from "./admin/Orders";
 import Quotes from "./admin/Quotes";
 import SettingsTab from "./admin/SettingsTab";
 import Statements from "./admin/Statements";
+import SpaceMapper from "./admin/SpaceMapper";
 import Spots from "./admin/Spots";
 import SupplierPhotos from "./admin/SupplierPhotos";
 import Survey from "./admin/Survey";
@@ -20,13 +21,14 @@ import { Toast, type ToastState } from "./ui";
 export type Act = (action: string, payload?: Record<string, unknown>) => Promise<Record<string, unknown> | null>;
 export type Say = (text: string, bad?: boolean) => void;
 
-type Tab = "inventory" | "counter" | "alerts" | "spots" | "machines" | "orders" | "statements" | "quotes" | "hoses" | "survey" | "photos" | "settings";
+type Tab = "inventory" | "counter" | "alerts" | "spots" | "spacemap" | "machines" | "orders" | "statements" | "quotes" | "hoses" | "survey" | "photos" | "settings";
 
 const TAB_NAMES: Record<Tab, string> = {
   inventory: "Inventory",
   counter: "Counter sale",
   alerts: "Running low",
   spots: "Shelf map",
+  spacemap: "Space mapper",
   machines: "Machines",
   orders: "Orders",
   statements: "Dealer pay",
@@ -127,8 +129,9 @@ export default function Admin() {
         {tab === "machines" && <Machines say={say} />}
         {tab === "survey" && <Survey say={say} />}
         {tab === "photos" && <SupplierPhotos say={say} />}
-        {!data && !loadError && !["survey", "photos", "machines", "hoses"].includes(tab) && <p className="empty">Loading the store…</p>}
-        {loadError && !["survey", "photos", "machines", "hoses"].includes(tab) && (
+        {tab === "spacemap" && <SpaceMapper say={say} />}
+        {!data && !loadError && !["survey", "photos", "machines", "hoses", "spacemap"].includes(tab) && <p className="empty">Loading the store…</p>}
+        {loadError && !["survey", "photos", "machines", "hoses", "spacemap"].includes(tab) && (
           <p className="empty err" role="alert">
             {loadError}
           </p>

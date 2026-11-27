@@ -120,6 +120,54 @@ Machine-down requests are shown the places marked in the Hoses tab as
 promising a one-hour build; with none, the customer is told to call the store.
 Shop requests are confirmed and priced by hand for now.
 
+## Space mapper (the Space mapper tab)
+
+Maps a shop's physical layout from photos, so pick tickets pull parts for
+several orders in one short walk. It is about what is there, what is next to
+what and how you walk it. Nothing is measured and nothing is drawn.
+
+1. **Photos and notes.** Snap or upload photos of the aisles, shelf tags, doors
+   and stairs (or a hand sketch), with a few words on each if needed.
+2. **Questions.** The reader drafts the layout and asks what it could not tell:
+   where picks start, whether an aisle is a dead end, how many bins a shelf has.
+   Answer or skip, and it reads again.
+3. **The layout.** One plain-text layout file, shown as an outline. It can be
+   edited by hand, downloaded and loaded back.
+4. **Shelf map.** One button adds the spots to the Shelf map tab. Nothing is ever
+   removed and no part moves. Pick tickets then start and finish at the file's
+   start point, take aisles in the shortest order, and walk a dead-end aisle in
+   and back out.
+
+The layout file (`lib/spacemap.ts` has the full rules):
+
+```
+spacemap 1
+name: McCormick Diesel Service
+
+Location MCD "McCormick Diesel"
+  Building 1 "Main shop"
+    Area 100 "Parts room"
+      Aisle 01..04
+        Section A..C
+          Bin 01..12
+      Aisle 05 (dead end)
+        Bin 01..08
+    Area 105 "Upstairs backstock"
+      Shelf A..D
+
+start: MCD-1-100 "Parts counter"
+link: MCD-1-100-04 <> MCD-1-105 far "Stairs at the end of aisle 4"
+```
+
+One spot per line, two spaces of indent to go inside, in walking order. A range
+(`01..12`) is that many spots, and what is indented under it is inside each one.
+Spots listed one after another are taken to be next to each other; a `link:`
+line says otherwise (`near`, `walk` or `far`). `start:` is where picks begin and
+end. The walk itself is `lib/walk.ts`; the reader's instructions are
+`lib/spacemap-read.ts`. Setup: `supabase/add-space-maps.sql` (after
+`add-shelf-spots.sql`), and `ANTHROPIC_API_KEY` for the photo reading. Without
+the key the file can still be written by hand.
+
 ## Environment variables
 
 The two public values are committed in `.env.production`. The secret values
@@ -134,7 +182,7 @@ redeploy. See `.env.example`.
 | `ADMIN_PASSWORD` | Password for `/admin`. Use a long one. |
 | `STRIPE_SECRET_KEY` | Stripe secret key (`sk_test_...` or `sk_live_...`) |
 | `SHIPPO_API_TOKEN` | Shippo API token (`shippo_test_...` or `shippo_live_...`) |
-| `ANTHROPIC_API_KEY` | Optional. Anthropic API key; switches on reading of survey photos. |
+| `ANTHROPIC_API_KEY` | Optional. Anthropic API key; switches on reading of survey photos and the Space mapper. |
 | `ANTHROPIC_MODEL` | Optional. Model used to read photos. Defaults to `claude-sonnet-5-5`. |
 | `RESEND_API_KEY`, `ALERT_FROM_EMAIL` | Optional. Send dealer alerts by email (Resend). The from address must be on a domain verified in Resend, like `Backroad Iron <orders@backroadiron.com>`. |
 | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM` | Optional. Send dealer alerts by text (Twilio). `TWILIO_FROM` is your Twilio number, like `+12175550100`. |

@@ -6,10 +6,16 @@
 // aisle and back down the next (a snake), so the picker never walks an aisle
 // twice. Items with no shelf spot come last, by name.
 //
+// When a layout file is on the shelf map (lib/spacemap.ts), the aisles are
+// visited in the shortest order from the start point and back (lib/walk.ts),
+// and a dead-end aisle is walked in and back out instead of through.
+//
 // A kit or package that has no shelf spot of its own but does have parts on
 // file is pulled as its parts; one that sits on a shelf is pulled whole.
 
 import { spotPath, spotName, treeRows, type Spot } from "./shelf.ts";
+import { NO_WALK_PLAN, type WalkPlan } from "./spacemap.ts";
+import { tour } from "./walk.ts";
 
 export type PickOrderItem = {
   id: number; // order item id
@@ -59,7 +65,15 @@ export type PickStop = {
 /** A run of stops that share an aisle (or the same parent spot), with its heading. */
 export type PickGroup = { heading: string; stops: PickStop[] };
 
-export type PickRoute = { groups: PickGroup[]; total: number; picked: number; lines: number; done: number };
+export type PickRoute = {
+  groups: PickGroup[];
+  total: number;
+  picked: number;
+  lines: number;
+  done: number;
+  /** Where the walk begins and ends ("Parts counter"), or "" when no layout file says. */
+  start: string;
+};
 
 const NOT_PLACED = "Not on the shelf map";
 const isAisle = (s: Spot) => /^(aisle|row)\b/i.test(s.level.trim());
@@ -115,7 +129,7 @@ export function expandParts(
  * trip to the bin for every order in the batch); stops are grouped by aisle
  * and ordered by the shelf map, snaking through the aisles.
  */
-export function routeParts(parts: PickPart[], products: PickProduct[], spots: Spot[]): PickRoute {
+export function routeParts(parts: PickPart[], products: PickProduct[], spots: Spot[], plan: WalkPlan = NO_WALK_PLAN): PickRoute {
   const rows = treeRows(spots);
   const rank = new Map(rows.map((r, i) => [r.spot.id, i]));
   const spotOf = new Map(products.map((p) => [p.id, p.spot_id && rank.has(p.spot_id) ? p.spot_id : null]));
@@ -147,7 +161,7 @@ export function routeParts(parts: PickPart[], products: PickProduct[], spots: Sp
   }
 
   // Group heading: the path down to the aisle (or to the spot's parent when no aisle is named).
-  const grouped = new Map<string, { heading: string; aisleRank: number; stops: PickStop[] }>();
+  const grouped = new Map<string, { key: string; heading: string; aisleRank: number; stops: PickStop[] }>();
   for (const stop of stops.values()) {
     stop.done = stop.picked_qty >= stop.qty;
     stop.parts.sort((a, b) => a.order_number - b.order_number || a.order_item_id - b.order_item_id);
@@ -165,12 +179,18 @@ export function routeParts(parts: PickPart[], products: PickProduct[], spots: Sp
       aisleRank = rank.get(key) ?? aisleRank;
       stop.where = below.map(spotName).join(", ");
     }
-    const g = grouped.get(key) ?? grouped.set(key, { heading, aisleRank, stops: [] }).get(key)!;
+    const g = grouped.get(key) ?? grouped.set(key, { key, heading, aisleRank, stops: [] }).get(key)!;
     g.stops.push(stop);
   }
 
-  // Groups in map order; within a group, bins in map order, every other aisle reversed.
-  const groups = [...grouped.values()].sort((a, b) => a.aisleRank - b.aisleRank);
+  // Groups in map order, or in the shortest order when a layout file says what
+  // is next to what. Within a group, bins in map order, every other aisle
+  // reversed; a dead-end aisle is walked in map order and does not turn the walk.
+  const inMapOrder = [...grouped.values()].sort((a, b) => a.aisleRank - b.aisleRank);
+  const placed = inMapOrder.filter((g) => g.heading !== NOT_PLACED);
+  const tours = tour(spots, placed.map((g) => g.key), plan);
+  const groups = [...tours.flatMap((t) => t.order.map((key) => grouped.get(key)!)), ...inMapOrder.filter((g) => g.heading === NOT_PLACED)];
+  const starts = tours.filter((t) => t.start).map((t) => t.start!.label);
   let aisleTurn = 0;
   for (const g of groups) {
     if (g.heading === NOT_PLACED) {
@@ -179,7 +199,7 @@ export function routeParts(parts: PickPart[], products: PickProduct[], spots: Sp
     }
     const byRank = (s: PickStop) => rank.get(s.spot_id!) ?? 0;
     g.stops.sort((a, b) => byRank(a) - byRank(b) || a.name.localeCompare(b.name));
-    if (spotPath(spots, g.stops[0]?.spot_id).some(isAisle)) {
+    if (spotPath(spots, g.stops[0]?.spot_id).some(isAisle) && !plan.deadEnds.has(g.key)) {
       if (aisleTurn % 2 === 1) g.stops.reverse();
       aisleTurn++;
     }
@@ -192,6 +212,7 @@ export function routeParts(parts: PickPart[], products: PickProduct[], spots: Sp
     picked: all.reduce((n, s) => n + Math.min(s.picked_qty, s.qty), 0),
     lines: all.length,
     done: all.filter((s) => s.done).length,
+    start: starts.length === 1 && tours.length === 1 ? starts[0] : "",
   };
 }
 
@@ -207,6 +228,7 @@ export function routeByPlace(
   spots: Spot[],
   placeOf: (part: PickPart) => string | null,
   places: Array<{ id: string; name: string }>,
+  plan: WalkPlan = NO_WALK_PLAN,
 ): PickRoute & { places: string[] } {
   const byPlace = new Map<string | null, PickPart[]>();
   for (const part of parts) {
@@ -215,13 +237,13 @@ export function routeByPlace(
   }
   const used = places.filter((p) => byPlace.has(p.id));
   if (used.length <= 1) {
-    return { ...routeParts(parts, products, spots), places: used.map((p) => p.name) };
+    return { ...routeParts(parts, products, spots, plan), places: used.map((p) => p.name) };
   }
   const order: Array<{ id: string | null; name: string }> = [...used];
   for (const id of byPlace.keys()) if (!order.some((p) => p.id === id)) order.push({ id, name: "Location not assigned" });
-  const out: PickRoute & { places: string[] } = { groups: [], total: 0, picked: 0, lines: 0, done: 0, places: used.map((p) => p.name) };
+  const out: PickRoute & { places: string[] } = { groups: [], total: 0, picked: 0, lines: 0, done: 0, start: "", places: used.map((p) => p.name) };
   for (const place of order) {
-    const r = routeParts(byPlace.get(place.id) ?? [], products, spots);
+    const r = routeParts(byPlace.get(place.id) ?? [], products, spots, plan);
     out.groups.push(...r.groups.map((g) => ({ ...g, heading: `${place.name}: ${g.heading}` })));
     out.total += r.total;
     out.picked += r.picked;

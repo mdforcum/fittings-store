@@ -90,6 +90,7 @@ export default function PickTicket({ orders }: { orders: string }) {
               </li>
             ))}
           </ul>
+          {route.start && <p className="pick-from">Start and finish at: {route.start}</p>}
           {(route.places?.length ?? 0) > 1 && (
             <p className="pick-from">
               Pull from {route.places!.length} locations: {route.places!.join(", ")}. Each has its own walk below.

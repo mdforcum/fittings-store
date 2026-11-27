@@ -1,5 +1,7 @@
 // Back office: pick tickets. One order or a batch, routed through the shop by
-// the shelf map (lib/picking.ts), with a check-off per item. Admin only.
+// the shelf map (lib/picking.ts), with a check-off per item. Layout files on
+// the shelf map (the Space mapper) say where the walk starts and what is next
+// to what. Admin only.
 //
 // GET  ?orders=<id>,<id>      the ticket: the orders and the walk
 // POST {action:"pick.mark", parts:[{order_item_id, product_id}], picked}
@@ -9,6 +11,8 @@ import { byLocationOrder, normalizeLocation, pickLocation, type Allocation } fro
 import { expandParts, routeByPlace, type PickKitItem, type PickMark, type PickOrderItem, type PickProduct } from "@/lib/picking";
 import { adminDb, json } from "@/lib/server";
 import type { Spot } from "@/lib/shelf";
+import { parseSpaceMap, walkPlan } from "@/lib/spacemap";
+import { appliedMarkups } from "@/lib/spacemap-server";
 
 export const dynamic = "force-dynamic";
 
@@ -72,7 +76,9 @@ async function load(orderIds: string[]) {
   const allocations = al.error ? [] : ((al.data ?? []) as Allocation[]);
   const lo = allocations.length ? await db.from("fittings_locations").select("*").eq("kind", "store") : { data: [], error: null };
   const places = lo.error ? [] : ((lo.data ?? []) as Array<Record<string, unknown>>).map(normalizeLocation).sort(byLocationOrder);
-  return { orders, items, products, kitItems, spots, marks, marksReady, allocations, places };
+  // Start points, links and dead ends from the layout files on the shelf map.
+  const plan = walkPlan((await appliedMarkups(db)).map((m) => parseSpaceMap(m).map), spots);
+  return { orders, items, products, kitItems, spots, marks, marksReady, allocations, places, plan };
 }
 
 function parseIds(raw: string | null): string[] | null {
@@ -99,6 +105,7 @@ export async function GET(req: Request) {
         return line ? pickLocation(d.allocations, line.order_id, line.product_id) : null;
       },
       d.places,
+      d.plan,
     );
     return json({
       ok: true,

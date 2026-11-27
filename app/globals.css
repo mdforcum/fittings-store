@@ -647,3 +647,25 @@ dialog.sheet { margin: 0 0 0 auto; width: min(440px, 100%); max-width: 100%; hei
 .po-box .po-guess, .po-done .po-wrong { grid-column: 1 / -1; flex-basis: 100%; margin: 0; }
 @media print { .po-wrong { display: none; } }
 .part-status { border: 1px solid var(--rule); border-left: 4px solid var(--bad); background: var(--bad-bg); padding: 12px 14px; font-size: 1.05rem; }
+
+/* Space mapper (back office): photos with notes, questions, and the layout outline. */
+.sm-pick { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
+label.btn { position: relative; }
+label.btn:focus-within { outline: 2px solid var(--focus); outline-offset: 2px; }
+.sm-photos { list-style: none; display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+.sm-photo { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 10px; padding: 8px; border: 1px solid var(--rule); background: var(--surface); }
+.sm-photo img, .sm-nophoto { width: 96px; height: 96px; object-fit: cover; background: var(--sunken); }
+.sm-nophoto { display: grid; place-items: center; color: var(--muted); font-size: .8rem; }
+.sm-photo-body { display: grid; gap: 6px; align-content: start; min-width: 0; }
+.sm-photo-body .btn { justify-self: start; }
+.sm-plain { padding-left: 18px; display: grid; gap: 4px; }
+.sm-q { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--rule); background: var(--surface); min-width: 0; }
+.sm-q legend { font-weight: 600; padding: 0 4px; }
+.sm-outline { list-style: none; display: grid; max-height: 440px; overflow: auto; border: 1px solid var(--rule); background: var(--surface); }
+.sm-outline li { display: grid; gap: 0 12px; padding: 5px 10px; border-top: 1px solid var(--sunken); }
+.sm-outline li:first-child { border-top: 0; }
+.sm-outline .mono { color: var(--muted); font-size: .8rem; overflow-wrap: anywhere; }
+@media (min-width: 640px) {
+  .sm-outline li { grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; }
+}
+.sm-file { font-family: var(--mono); font-size: .85rem; white-space: pre; overflow: auto; }

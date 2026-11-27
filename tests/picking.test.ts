@@ -153,3 +153,39 @@ test("a batch from two locations is two walks, one per location", async () => {
   assert.deepEqual(one.places, ["Main shop"]);
   assert.equal(one.groups[0].heading, "Not on the shelf map", "one location: no prefix");
 });
+
+test("with a layout file on the shelf map, the walk starts at the counter and a dead-end aisle is walked in and out", async () => {
+  const { parseSpaceMap, walkPlan } = await import("../lib/spacemap.ts");
+  // The back room is listed first on the shelf map (sort 5) but is the far end of the building;
+  // aisle 01 is a dead end against the wall.
+  const { map, problems } = parseSpaceMap(`spacemap 1
+Location EFF
+  Area 200 "Back room"
+    Shelf A
+  Building 1
+    Aisle 01 (dead end)
+      Section 1..3
+    Aisle 02
+      Section 1..3
+start: EFF-1 "Front counter"
+link: EFF-1-02 <> EFF-200 far "Through the wash bay"
+`);
+  assert.deepEqual(problems, []);
+  const plan = walkPlan([map], SPOTS);
+  assert.equal(plan.lost, 0);
+  const items = [item(1, 1001, "hose", 1), item(2, 1001, "cap", 2), item(3, 1002, "seal", 1), item(4, 1002, "tee", 1), item(5, 1002, "filter", 1), item(6, 1002, "cap", 1)];
+  const route = routeParts(expandParts(items, PRODUCTS, [], []), PRODUCTS, SPOTS, plan);
+  assert.equal(route.start, "Front counter");
+  assert.deepEqual(
+    route.groups.map((g) => [g.heading, g.stops.map((x) => `${x.product_id} x${x.qty}`)]),
+    [
+      ["Effingham store, Main building, Aisle 01", ["tee x1", "cap x3"]], // in and back out: map order, both orders' caps in one stop
+      ["Effingham store, Main building, Aisle 02", ["filter x1", "hose x1"]], // the first through aisle, so still map order
+      ["Effingham store, Back room", ["seal x1"]], // last: it is far, through the wash bay off aisle 2
+    ],
+  );
+  // The same pick with no layout file: the back room first, as the shelf map lists it, and aisle 2 walked backwards.
+  const plain = routeParts(expandParts(items, PRODUCTS, [], []), PRODUCTS, SPOTS);
+  assert.equal(plain.start, "");
+  assert.deepEqual(plain.groups.map((g) => g.stops.map((x) => x.product_id)), [["tee", "cap"], ["hose", "filter"], ["seal"]]);
+});

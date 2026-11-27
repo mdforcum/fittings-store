@@ -33,6 +33,8 @@ export async function askVision(opts: {
   images: Array<{ bytes: Buffer; mediaType: string; caption?: string }>;
   text: string;
   maxTokens?: number;
+  /** How long to wait for an answer. Many photos and a long reply need more than the usual 45 seconds. */
+  timeoutMs?: number;
 }): Promise<unknown> {
   if (!env.anthropic) throw new VisionError("Photo reading is not switched on yet.");
   const content: Array<Record<string, unknown>> = [];
@@ -69,7 +71,7 @@ export async function askVision(opts: {
           tool_choice: { type: "auto" },
           messages: [{ role: "user", content }],
         }),
-        signal: AbortSignal.timeout(45_000),
+        signal: AbortSignal.timeout(opts.timeoutMs ?? 45_000),
         cache: "no-store",
       });
     } catch {
