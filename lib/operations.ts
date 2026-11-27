@@ -119,6 +119,28 @@ export function counterWarnings(lines: CounterLine[], onShelf: Record<string, nu
 
 export const IMPORT_LIMIT = 2000;
 
+/** One ZIP code's center point, as the routing table stores it. */
+export type ZipPoint = { zip: string; lat: number; lng: number };
+
+/**
+ * Turns the open-source ZIP code list into rows for the routing table. Keeps United States five-digit
+ * ZIP codes that have a real point on the map, one row per ZIP, and drops everything else.
+ */
+export function zipRows(codes: Record<string, { zip?: unknown; latitude?: unknown; longitude?: unknown; country?: unknown }>): ZipPoint[] {
+  const seen = new Set<string>();
+  const out: ZipPoint[] = [];
+  for (const c of Object.values(codes ?? {})) {
+    const zip = String(c?.zip ?? "");
+    const lat = Number(c?.latitude);
+    const lng = Number(c?.longitude);
+    if (c?.country !== "US" || !/^\d{5}$/.test(zip) || seen.has(zip)) continue;
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180 || (lat === 0 && lng === 0)) continue;
+    seen.add(zip);
+    out.push({ zip, lat, lng });
+  }
+  return out;
+}
+
 /** Splits CSV text into rows. Handles quotes, doubled quotes and line breaks in quotes. */
 export function parseCsv(text: string): string[][] {
   const rows: string[][] = [];

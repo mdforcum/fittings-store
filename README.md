@@ -238,7 +238,9 @@ and everything else are reachable only with the secret key.
 - **Package prefill.** On the dealer page, the label's weight is filled in from the parts' saved packed weight (Edit item, Details) when every part has one. The box size is filled in only for a single part with a saved box size. The dealer can change both.
 - **Void a label** (`supabase/add-label-voids.sql`). Staff only: Orders, the shipment line, Void label. Shippo is asked for the refund (it can take up to 14 days to confirm; a used label is turned down and nothing changes), the dealer's statement gets a line that gives the charge back, the shipment comes off the order and the order goes back to To ship. Each void is kept in `fittings_label_voids`.
 
-Checks: `supabase/test-operations.sql`, `supabase/test-dealer-labels.sql` and `supabase/test-label-voids.sql` on a scratch database with every change loaded.
+- **Real mileage** (`supabase/add-zip-miles.sql`). When an order is routed to a location, "nearest" means the shortest straight-line distance in miles between the shopper's ZIP code and each location's ZIP code. Load the ZIP code table once in Settings, Dealers and locations, Real mileage (Load ZIP codes). The points come from the open-source `zipcodes` npm package (version 8, BSD licence; its README says the United States list came from federalgovernmentzipcodes.us), kept in `fittings_zip_points`. If a ZIP code is not in the table, or the table is empty, routing falls back to the old rule: same first three ZIP digits, then same state. Nothing changes until the ZIP codes are loaded.
+
+Checks: `supabase/test-operations.sql`, `supabase/test-dealer-labels.sql`, `supabase/test-label-voids.sql` and `supabase/test-zip-miles.sql` on a scratch database with every change loaded.
 
 ## Part pages for search (`/part/<id>`)
 

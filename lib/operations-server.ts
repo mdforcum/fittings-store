@@ -3,7 +3,7 @@
 // logins and the alert outbox. Called from the back end's single API.
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { TYPE_CATEGORY } from "./foundation";
-import { counterLines, IMPORT_LIMIT, okEmail, refundFor, runningLow, stillOut, toE164, type LowLine } from "./operations";
+import { counterLines, IMPORT_LIMIT, okEmail, refundFor, runningLow, stillOut, toE164, zipRows, type LowLine } from "./operations";
 import { LABELS_KEY, MAX_FLAT_CENTS, MAX_MARKUP_BPS, readLabels } from "./labels";
 import { buildIndex, linkUpc, readPartPhoto } from "./lookup-server";
 import { hashPassword, passwordProblem } from "./passwords";
@@ -33,8 +33,8 @@ function slug(text: string): string {
     .slice(0, 48);
 }
 
-export function opsStatus(ready: boolean, labelsReady = false, labelConfig: unknown = null) {
-  return { ready, email: emailReady(), text: textReady(), labels: { ...readLabels(labelConfig), ready: labelsReady, shippo: !!env.shippo } };
+export function opsStatus(ready: boolean, labelsReady = false, labelConfig: unknown = null, zips: { ready: boolean; count: number } = { ready: false, count: 0 }) {
+  return { ready, email: emailReady(), text: textReady(), labels: { ...readLabels(labelConfig), ready: labelsReady, shippo: !!env.shippo }, zips };
 }
 
 /** Parts running low at every active store location. */
@@ -290,6 +290,24 @@ export async function runOps(action: string, a: Payload, db: SupabaseClient): Pr
       const problem = await linkUpc(db, str(a.product_id, 80), str(a.code, 20));
       if (problem) fail(problem);
       return { index: await buildIndex(db, { supplier: true }) };
+    }
+
+    // Real mileage for routing: fills the ZIP code table from the open-source "zipcodes" package.
+    case "zips.load": {
+      const probe = await db.from("fittings_zip_points").select("zip").limit(1);
+      if (missing(probe.error)) fail("Run supabase/add-zip-miles.sql in the Supabase SQL Editor first.");
+      const { default: zipcodes } = await import("zipcodes");
+      const rows = zipRows(zipcodes.codes);
+      if (!rows.length) fail("The ZIP code list came back empty. Nothing was changed.");
+      const chunks: Array<typeof rows> = [];
+      for (let i = 0; i < rows.length; i += 2000) chunks.push(rows.slice(i, i + 2000));
+      // A few at a time, so the load is quick without flooding the database.
+      for (let i = 0; i < chunks.length; i += 4) {
+        const done = await Promise.all(chunks.slice(i, i + 4).map((c) => db.from("fittings_zip_points").upsert(c, { onConflict: "zip" })));
+        const bad = done.find((r) => r.error);
+        if (bad?.error) fail(`The ZIP code table stopped part way: ${bad.error.message}. It's safe to load it again.`);
+      }
+      return { loaded: rows.length };
     }
 
     // Dealer shipping labels ------------------------------------------------------------------------

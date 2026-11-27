@@ -183,7 +183,7 @@ export type AdminData = {
   /** Whether Backroad Iron orders go to dealers, and the cut. */
   routing: RoutingSettings;
   /** Returns, counter sales, dealer logins and alerts (supabase/add-operations.sql). */
-  ops: { ready: boolean; email: boolean; text: boolean; labels: LabelSettings & { ready: boolean; shippo: boolean } };
+  ops: { ready: boolean; email: boolean; text: boolean; labels: LabelSettings & { ready: boolean; shippo: boolean }; zips: { ready: boolean; count: number } };
 };
 
 /** One line of an item's stock history. */

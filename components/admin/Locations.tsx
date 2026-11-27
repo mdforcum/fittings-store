@@ -41,6 +41,7 @@ export default function Locations({ data, act, say }: Props) {
         default; if none has it all, each part comes from wherever it is.
       </p>
       {data.routing?.ready && <RoutingBlock data={data} act={act} say={say} />}
+      {data.routing?.ready && <MileageBlock data={data} act={act} say={say} />}
       {data.ops?.ready && <LabelsBlock data={data} act={act} say={say} />}
       {places.dealers.map((d) => (
         <DealerBlock key={d.id} dealer={d} data={data} act={act} say={say} />
@@ -268,6 +269,43 @@ export function LocationForm({
         )}
       </div>
     </form>
+  );
+}
+
+/** Real mileage for "nearest": a one-time load of ZIP code centers. */
+function MileageBlock({ data, act, say }: Props) {
+  const z = data.ops?.zips ?? { ready: false, count: 0 };
+  const [busy, setBusy] = useState(false);
+  return (
+    <div className="panel loc-form" role="group" aria-label="Real mileage">
+      <h3>Real mileage</h3>
+      <p className="hint">
+        When an order is routed, &quot;nearest&quot; can mean the shortest distance in miles from the shopper&apos;s ZIP code to each location&apos;s ZIP code
+        (straight-line, not road miles). Without this it means same first three ZIP digits, then same state.
+      </p>
+      {!z.ready ? (
+        <p className="warn">Run supabase/add-zip-miles.sql in the Supabase SQL Editor to switch this on.</p>
+      ) : (
+        <>
+          <p>{z.count > 0 ? `${z.count.toLocaleString("en-US")} ZIP codes loaded. Routing uses miles.` : "No ZIP codes loaded yet, so routing still uses the rough rule."}</p>
+          <div className="inline">
+            <button
+              type="button"
+              className={z.count > 0 ? "btn ghost" : "btn"}
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true);
+                const r = await act("zips.load");
+                setBusy(false);
+                if (r) say(`${Number(r.loaded ?? 0).toLocaleString("en-US")} ZIP codes loaded. Routing now uses miles.`);
+              }}
+            >
+              {busy ? "Loading…" : z.count > 0 ? "Load ZIP codes again" : "Load ZIP codes"}
+            </button>
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 

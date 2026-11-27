@@ -107,7 +107,7 @@ async function loadData(db: SupabaseClient): Promise<AdminData> {
   // Charges and quotes came later: if their tables are missing the rest of the
   // back office still loads, with these lists empty.
   const orderIds = (o.data ?? []).map((r) => r.id as string);
-  const [ch, q, h, dl, lo, oh, al, sf, rt, sh, lb] = await Promise.all([
+  const [ch, q, h, dl, lo, oh, al, sf, rt, sh, lb, zp] = await Promise.all([
     orderIds.length
       ? db.from("fittings_order_charges").select("*, returns:fittings_core_returns(*)").in("order_id", orderIds)
       : Promise.resolve({ data: [], error: null }),
@@ -130,6 +130,9 @@ async function loadData(db: SupabaseClient): Promise<AdminData> {
       : Promise.resolve({ data: [], error: null }),
     // Dealer labels came with supabase/add-dealer-labels.sql.
     db.from("fittings_shipments").select("shippo_transaction_id").limit(1),
+    // The ZIP code table for real mileage came with supabase/add-zip-miles.sql. This reads one row
+    // rather than asking for a count alone: a count-only request can't tell a missing table from an empty one.
+    db.from("fittings_zip_points").select("zip", { count: "exact" }).limit(1),
   ]);
   const opsReady = !rt.error;
   const returnedBy = new Map<string, Array<{ product_id: string; qty: number }>>();
@@ -212,7 +215,7 @@ async function loadData(db: SupabaseClient): Promise<AdminData> {
       : NO_PLACES,
     storefronts: sf.error ? [] : ((sf.data ?? []) as Array<Record<string, unknown>>).map(normalizeStorefront),
     routing: readRouting(s.data as Record<string, unknown> | null),
-    ops: opsStatus(opsReady, !lb.error, ((cfg.data ?? []) as Array<{ key: string; value: unknown }>).find((r) => r.key === LABELS_KEY)?.value),
+    ops: opsStatus(opsReady, !lb.error, ((cfg.data ?? []) as Array<{ key: string; value: unknown }>).find((r) => r.key === LABELS_KEY)?.value, { ready: !zp.error, count: zp.error ? 0 : (zp.count ?? 0) }),
     integrations: {
       stripe: modeOf(env.stripe, "_live_", "_test_"),
       webhook: webhook || !!process.env.STRIPE_WEBHOOK_SECRET,

@@ -10,6 +10,7 @@ import {
   locationShipFrom,
   lowStockText,
   mainLocationId,
+  zipRows,
   orderAlert,
   parseCsv,
   priceCents,
@@ -198,4 +199,30 @@ test("a dealer's spreadsheet changes counts only, for parts already in the catal
   assert.equal(out.same, 1);
   assert.deepEqual(out.unknown.map((l) => l.part_number), ["NEW-1", "NEW-2"], "new parts are reported, never added");
   assert.deepEqual(out.bad.map((l) => l.row), [6, 7, 8], "no part number, a repeat, and a bad count are left out");
+});
+
+test("zipRows keeps United States ZIP codes that have a real point, one row each", () => {
+  const rows = zipRows({
+    a: { zip: "62565", latitude: 39.41, longitude: -88.79, country: "US" },
+    b: { zip: "62401", latitude: "39.12", longitude: "-88.54", country: "US" },
+    canada: { zip: "T5A", latitude: 53.5, longitude: -113.4, country: "Canada" },
+    short: { zip: "6256", latitude: 39, longitude: -88, country: "US" },
+    nowhere: { zip: "00000", latitude: 0, longitude: 0, country: "US" },
+    blank: { zip: "99999", latitude: null, longitude: undefined, country: "US" },
+    off: { zip: "11111", latitude: 120, longitude: -88, country: "US" },
+    again: { zip: "62565", latitude: 1, longitude: 1, country: "US" },
+  });
+  assert.deepEqual(rows, [
+    { zip: "62565", lat: 39.41, lng: -88.79 },
+    { zip: "62401", lat: 39.12, lng: -88.54 },
+  ]);
+  assert.deepEqual(zipRows({}), []);
+});
+
+test("the ZIP code package gives enough real points to route by miles", async () => {
+  const { default: zipcodes } = await import("zipcodes");
+  const rows = zipRows(zipcodes.codes);
+  assert.ok(rows.length > 30000, `expected most United States ZIP codes, got ${rows.length}`);
+  const shelbyville = rows.find((r) => r.zip === "62565");
+  assert.ok(shelbyville && Math.abs(shelbyville.lat - 39.4) < 0.3 && Math.abs(shelbyville.lng + 88.8) < 0.3, "62565 sits in central Illinois");
 });
