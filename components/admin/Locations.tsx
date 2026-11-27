@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { AdminData } from "@/lib/admin-types";
 import { normCode, type Dealer, type StoreLocation } from "@/lib/places";
+import { bpsToPercent, percentToBps } from "@/lib/settlements";
 import { dollarsToCents, type Storefront } from "@/lib/storefront";
 
 const centsText = (c: number) => (c / 100).toFixed(2);
@@ -39,6 +40,7 @@ export default function Locations({ data, act, say }: Props) {
         Each location keeps its own count of every part. Paid orders come from one location that has everything, starting with the
         default; if none has it all, each part comes from wherever it is.
       </p>
+      {data.routing?.ready && <RoutingBlock data={data} act={act} say={say} />}
       {places.dealers.map((d) => (
         <DealerBlock key={d.id} dealer={d} data={data} act={act} say={say} />
       ))}
@@ -88,12 +90,26 @@ function DealerBlock({ dealer, data, act, say }: { dealer: Dealer; data: AdminDa
       <ul className="loc-list">
         {mine.map((l) => (
           <li key={l.id}>
-            <LocationForm dealerId={dealer.id} loc={l} isDefault={data.places.default_location_id === l.id} act={act} say={say} />
+            <LocationForm
+              dealerId={dealer.id}
+              loc={l}
+              isDefault={data.places.default_location_id === l.id}
+              routable={!!data.routing?.ready && data.routing.house_dealer_id !== dealer.id}
+              act={act}
+              say={say}
+            />
           </li>
         ))}
       </ul>
       {adding ? (
-        <LocationForm dealerId={dealer.id} isDefault={false} act={act} say={say} onDone={() => setAdding(false)} />
+        <LocationForm
+          dealerId={dealer.id}
+          isDefault={false}
+          routable={!!data.routing?.ready && data.routing.house_dealer_id !== dealer.id}
+          act={act}
+          say={say}
+          onDone={() => setAdding(false)}
+        />
       ) : (
         <button type="button" className="btn ghost sm" onClick={() => setAdding(true)}>
           Add a location for {dealer.name}
@@ -108,6 +124,7 @@ export function LocationForm({
   dealerId,
   loc,
   isDefault,
+  routable = false,
   act,
   say,
   onDone,
@@ -116,6 +133,8 @@ export function LocationForm({
   dealerId: string;
   loc?: StoreLocation;
   isDefault: boolean;
+  /** An outside dealer's location, once routing is set up: it may opt in to Backroad Iron orders. */
+  routable?: boolean;
   act: Act;
   say: Say;
   onDone?: () => void;
@@ -133,17 +152,24 @@ export function LocationForm({
     pickup: loc?.pickup ?? true,
     active: loc?.active ?? true,
     make_default: false,
+    takes_routed: loc?.takes_routed ?? false,
   });
   const [busy, setBusy] = useState(false);
   const set = (k: "name" | "code" | "city" | "state" | "zip") => (e: React.ChangeEvent<HTMLInputElement>) =>
     setF({ ...f, [k]: k === "code" ? normCode(e.target.value) : k === "state" ? e.target.value.toUpperCase().slice(0, 2) : e.target.value });
-  const tick = (k: "ships" | "pickup" | "active" | "make_default") => (e: React.ChangeEvent<HTMLInputElement>) =>
+  const tick = (k: "ships" | "pickup" | "active" | "make_default" | "takes_routed") => (e: React.ChangeEvent<HTMLInputElement>) =>
     setF({ ...f, [k]: e.target.checked });
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
-    const done = await act("location.save", { ...f, dealer_id: dealerId, ...(loc ? { location_id: loc.id } : {}) });
+    const { takes_routed, ...rest } = f;
+    const done = await act("location.save", {
+      ...rest,
+      ...(routable ? { takes_routed } : {}),
+      dealer_id: dealerId,
+      ...(loc ? { location_id: loc.id } : {}),
+    });
     setBusy(false);
     if (done) {
       say(loc ? `${f.name.trim()} saved` : `Added ${f.name.trim()}`);
@@ -188,6 +214,11 @@ export function LocationForm({
         <label>
           <input type="checkbox" checked={f.active} onChange={tick("active")} /> Open
         </label>
+        {routable && (
+          <label>
+            <input type="checkbox" checked={f.takes_routed} onChange={tick("takes_routed")} /> Takes Backroad Iron orders
+          </label>
+        )}
         {isDefault ? (
           <span className="loc-default">Default location</span>
         ) : (
@@ -404,6 +435,74 @@ function StorefrontForm({
           </button>
         )}
       </div>
+    </form>
+  );
+}
+
+/** Backroad Iron orders sent to dealers who opt in, and Backroad Iron's cut. */
+function RoutingBlock({ data, act, say }: Props) {
+  const r = data.routing;
+  const [f, setF] = useState({
+    route_orders: r.route_orders,
+    cut: bpsToPercent(r.route_cut_bps),
+    fee: bpsToPercent(r.storefront_fee_bps),
+    house: r.house_dealer_id ?? data.places.dealers[0]?.id ?? "",
+  });
+  const [busy, setBusy] = useState(false);
+  const opted = data.places.locations.filter((l) => l.takes_routed && l.dealer_id !== f.house);
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    const cut = percentToBps(f.cut);
+    const fee = percentToBps(f.fee);
+    if (Number.isNaN(cut)) return say("Backroad Iron's cut is a percent from 0 to 50, like 10.", true);
+    if (Number.isNaN(fee)) return say("The own-store fee is a percent from 0 to 50. Use 0 for none.", true);
+    setBusy(true);
+    const done = await act("routing.save", { route_orders: f.route_orders, route_cut_bps: cut, storefront_fee_bps: fee, house_dealer_id: f.house });
+    setBusy(false);
+    if (done) say(f.route_orders ? "Routing saved. Backroad Iron orders now go to dealers who take them." : "Routing saved. It's off.");
+  }
+
+  return (
+    <form className="form loc-form route-form" onSubmit={save} aria-label="Routing Backroad Iron orders">
+      <h3>Backroad Iron orders filled by dealers</h3>
+      <p className="hint">
+        When a Backroad Iron customer orders a part a dealer has, the dealer nearest them (same ZIP area, then same state) can ship it.
+        Backroad Iron keeps its cut and the dealer&apos;s share of the card fee; the dealer gets the rest and the shipping. Only locations
+        set to &quot;Takes Backroad Iron orders&quot; are used. Counter pickups stay at Backroad Iron.
+      </p>
+      <label className="check-row" htmlFor="rt-on">
+        <input id="rt-on" type="checkbox" checked={f.route_orders} onChange={(e) => setF({ ...f, route_orders: e.target.checked })} />
+        Send Backroad Iron orders to dealers who take them
+      </label>
+      <p className="hint">
+        {opted.length
+          ? `Taking orders now: ${opted.map((l) => l.name).join(", ")}.`
+          : "No dealer location takes Backroad Iron orders yet. Tick it on a location below."}
+      </p>
+      <div className="three">
+        <label htmlFor="rt-cut">
+          Backroad Iron&apos;s cut %
+          <input id="rt-cut" inputMode="decimal" autoComplete="off" value={f.cut} onChange={(e) => setF({ ...f, cut: e.target.value })} />
+        </label>
+        <label htmlFor="rt-fee">
+          Fee on a dealer&apos;s own-store sales %
+          <input id="rt-fee" inputMode="decimal" autoComplete="off" value={f.fee} onChange={(e) => setF({ ...f, fee: e.target.value })} />
+        </label>
+        <label htmlFor="rt-house">
+          Backroad Iron is
+          <select id="rt-house" value={f.house} onChange={(e) => setF({ ...f, house: e.target.value })}>
+            {data.places.dealers.map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <button type="submit" className="btn sm" disabled={busy}>
+        {busy ? "Saving…" : "Save routing"}
+      </button>
     </form>
   );
 }

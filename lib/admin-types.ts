@@ -1,6 +1,7 @@
 // Shapes shared by the back-end API and the back-end screens.
 import type { Product, Settings } from "./catalog";
 import type { Allocation, Places } from "./places";
+import type { RoutingSettings } from "./settlements";
 import type { Storefront } from "./storefront";
 
 export type ShipFrom = {
@@ -159,6 +160,8 @@ export type AdminData = {
   places: Places;
   /** Branded stores at dealers' own web addresses; empty before they're set up. */
   storefronts: Storefront[];
+  /** Whether Backroad Iron orders go to dealers, and the cut. */
+  routing: RoutingSettings;
 };
 
 /** One line of an item's stock history. */

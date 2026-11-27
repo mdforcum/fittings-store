@@ -28,6 +28,7 @@ import {
 import { coreCredit, storeDate } from "@/lib/checkout-rules";
 import { placeByType } from "@/lib/foundation-server";
 import { heldMap } from "@/lib/holds";
+import { monthOf, monthRange, readRouting, type SettlementRow } from "@/lib/settlements";
 import { cleanHost, cleanLogo, normalizeStorefront, storefrontProblem } from "@/lib/storefront";
 import {
   NO_PLACES,
@@ -40,7 +41,7 @@ import {
   type Allocation,
   type Dealer,
 } from "@/lib/places";
-import { getStripe } from "@/lib/payments";
+import { cardFee, getStripe } from "@/lib/payments";
 import { T, adminDb, env, getConfig, json, setConfig } from "@/lib/server";
 import { buyLabel, freshLabelUrl, getRates } from "@/lib/shippo";
 
@@ -161,6 +162,7 @@ async function loadData(db: SupabaseClient): Promise<AdminData> {
         }
       : NO_PLACES,
     storefronts: sf.error ? [] : ((sf.data ?? []) as Array<Record<string, unknown>>).map(normalizeStorefront),
+    routing: readRouting(s.data as Record<string, unknown> | null),
     integrations: {
       stripe: modeOf(env.stripe, "_live_", "_test_"),
       webhook: webhook || !!process.env.STRIPE_WEBHOOK_SECRET,
@@ -330,6 +332,74 @@ async function run(action: string, a: Payload, db: SupabaseClient, origin: strin
       return { dealer_id: ins.data!.id };
     }
 
+    case "routing.save": {
+      const cut = int(a.route_cut_bps);
+      const fee = int(a.storefront_fee_bps);
+      if (cut == null || cut < 0 || cut > 5000) fail("Backroad Iron's cut is 0 to 50%.");
+      if (fee == null || fee < 0 || fee > 5000) fail("The fee on a dealer's own-store sales is 0 to 50%.");
+      if (!isId(a.house_dealer_id)) fail("Pick which dealer is Backroad Iron.");
+      const r = await db
+        .from(T.settings)
+        .update({ route_orders: a.route_orders === true, route_cut_bps: cut, storefront_fee_bps: fee, house_dealer_id: a.house_dealer_id })
+        .eq("id", 1);
+      if (r.error) fail(/route_orders|route_cut|storefront_fee|house_dealer/.test(r.error.message) ? "Routing isn't set up in the database yet." : r.error.message);
+      return {};
+    }
+
+    case "statements.load": {
+      if (!isId(a.dealer_id)) fail("Pick a dealer.");
+      const month = /^\d{4}-\d{2}$/.test(String(a.month)) ? String(a.month) : null;
+      const q = db.from("fittings_settlements").select("*").eq("dealer_id", a.dealer_id as string).order("created_at");
+      const { data, error } = month ? await q.gte("created_at", monthRange(month).from).lt("created_at", monthRange(month).to) : await q.limit(5000);
+      if (error) fail("Dealer statements aren't set up in the database yet.");
+      const all = (data ?? []) as Array<Record<string, unknown>>;
+      const ids = [...new Set(all.map((r) => r.order_id as string))];
+      const nums: Record<string, number> = {};
+      if (ids.length) for (const o of (await db.from(T.orders).select("id, number").in("id", ids)).data ?? []) nums[o.id as string] = o.number as number;
+      const rows = all
+        .map((r) => ({ ...(r as unknown as SettlementRow), order_number: nums[r.order_id as string] ?? null }))
+        .filter((r) => !month || monthOf(r.created_at) === month);
+      return { rows, months: month ? [] : [...new Set(rows.map((r) => monthOf(r.created_at)))].sort().reverse() };
+    }
+
+    case "statements.fees": {
+      // Fill in Stripe's fee for paid orders that don't have it yet.
+      const { data, error } = await db.from(T.orders).select("id, stripe_payment_intent").is("card_fee_cents", null).in("status", ["paid", "shipped"]).limit(100);
+      if (error) fail("Dealer statements aren't set up in the database yet.");
+      let filled = 0;
+      for (const o of data ?? []) {
+        const fee = await cardFee((o.stripe_payment_intent as string | null) ?? null);
+        if (fee == null) continue;
+        const r = await db.rpc("fittings_record_card_fee", { p_order_id: o.id, p_fee: fee });
+        if (!r.error) filled++;
+      }
+      return { filled };
+    }
+
+    case "statements.pay": {
+      if (!isId(a.dealer_id)) fail("Pick a dealer.");
+      const month = /^\d{4}-\d{2}$/.test(String(a.month)) ? String(a.month) : fail("Pick a month.");
+      const note = str(a.note, 120).trim();
+      if (!note) fail("Say how it was paid, like Check 1041 or ACH Dec 5.");
+      const { from, to } = monthRange(month);
+      const { data, error } = await db
+        .from("fittings_settlements")
+        .select("order_id, created_at, net_cents")
+        .eq("dealer_id", a.dealer_id as string)
+        .is("paid_at", null)
+        .gte("created_at", from)
+        .lt("created_at", to);
+      if (error) fail(error.message);
+      const due = (data ?? []).filter((r) => monthOf(r.created_at as string) === month);
+      if (due.some((r) => r.net_cents == null)) fail("Some lines are still waiting on Stripe's card fee. Use Fill in card fees first.");
+      if (!due.length) fail("Nothing unpaid for that month.");
+      const when = new Date().toISOString();
+      for (const r of due) {
+        await must(db.from("fittings_settlements").update({ paid_at: when, paid_note: note }).eq("order_id", r.order_id as string).eq("dealer_id", a.dealer_id as string).is("paid_at", null));
+      }
+      return { paid: due.length };
+    }
+
     case "storefront.save": {
       const all = await db.from("fittings_storefronts").select("*");
       if (all.error) fail("Storefronts aren't set up yet.");
@@ -402,6 +472,8 @@ async function run(action: string, a: Payload, db: SupabaseClient, origin: strin
         pickup: a.pickup !== false,
         active: a.active !== false,
         sort: int(a.sort) ?? (locId ? others.find((o) => o.id === locId)?.sort ?? 0 : others.length),
+        // Only sent once routing is set up in the database.
+        ...(typeof a.takes_routed === "boolean" ? { takes_routed: a.takes_routed } : {}),
       };
       const problem = locationProblem({ ...row, id: locId }, others);
       if (problem) fail(problem);

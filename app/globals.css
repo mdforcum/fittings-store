@@ -518,3 +518,30 @@ dialog.sheet { margin: 0 0 0 auto; width: min(440px, 100%); max-width: 100%; hei
 .sf-choice label { display: flex; align-items: flex-start; gap: 10px; min-height: 48px; padding-top: 12px; font-weight: 500; }
 .sf-choice input[type="radio"], .sf-choice input[type="checkbox"] { width: 22px; height: 22px; flex: none; margin-top: 1px; }
 .sf-choice .hint { margin: 0 0 0 32px; }
+.route-form h3, .sf-form h3 { margin: 0; }
+.st-pick { max-width: 640px; }
+.st-title { margin: 18px 0 8px; }
+.st-sum { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 0 0 12px; }
+.st-sum div { border: 1px solid var(--rule); background: var(--surface); padding: 10px 12px; }
+.st-sum dt { font-size: .86rem; color: var(--muted); }
+.st-sum dd { margin: 2px 0 0; font: 700 1.2rem/1.2 var(--mono); }
+.st-sum .st-owed { border-color: var(--ok); background: var(--ok-bg); }
+.warn-line { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 12px; background: var(--hold-bg); color: var(--hold); font-weight: 600; }
+.st-table-wrap { overflow-x: auto; }
+.st-table { width: 100%; border-collapse: collapse; font-size: .95rem; }
+.st-table th, .st-table td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+.st-table th { font-size: .82rem; color: var(--muted); font-weight: 600; }
+.st-table .num { text-align: right; font-family: var(--mono); white-space: nowrap; }
+.st-actions { margin: 12px 0; }
+.st-pay { max-width: 520px; border: 1px solid var(--rule); background: var(--sunken); padding: 12px; }
+.st-foot { margin-top: 16px; }
+@media print {
+  .statements .st-pick, .statements .st-actions, .statements .st-pay, .statements .warn-line button { display: none; }
+}
+@media (max-width: 640px) {
+  .st-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .st-table, .st-table tbody, .st-table tr, .st-table td { display: block; width: 100%; }
+  .st-table tr { border: 1px solid var(--rule); background: var(--surface); margin-bottom: 10px; padding: 6px 10px; }
+  .st-table td { display: flex; justify-content: space-between; gap: 12px; border: 0; padding: 6px 0; text-align: right; }
+  .st-table td::before { content: attr(data-label); color: var(--muted); font-family: var(--sans, inherit); text-align: left; }
+}

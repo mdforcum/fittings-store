@@ -67,7 +67,7 @@ export async function fulfillSession(
 
   const { error } = await adminDb().rpc("fittings_fulfill_order", {
     p_order_id: orderId,
-    p_details: details,
+    p_details: { ...details, card_fee_cents: await cardFee(details.stripe_payment_intent) },
   });
   if (error) throw new Error(`fulfill failed: ${error.message}`);
   return { orderId, paid: true };
@@ -81,4 +81,22 @@ export async function expireOrder(session: Stripe.Checkout.Session): Promise<voi
   // The payment page closed unpaid: its parts go back on sale. (Before the
   // holds are set up this call fails harmlessly.)
   await db.rpc("fittings_release_holds", { p_order_id: orderId, p_reason: "expired" });
+}
+
+/**
+ * What Stripe charged to process a payment, in cents, read from the payment's
+ * balance transaction. Null when Stripe hasn't settled it yet or can't be
+ * reached; the dealer statements can fill it in later.
+ */
+export async function cardFee(paymentIntentId: string | null): Promise<number | null> {
+  const stripe = getStripe();
+  if (!stripe || !paymentIntentId) return null;
+  try {
+    const pi = await stripe.paymentIntents.retrieve(paymentIntentId, { expand: ["latest_charge.balance_transaction"] });
+    const charge = pi.latest_charge;
+    const bt = charge && typeof charge === "object" ? charge.balance_transaction : null;
+    return bt && typeof bt === "object" && typeof bt.fee === "number" ? bt.fee : null;
+  } catch {
+    return null;
+  }
 }

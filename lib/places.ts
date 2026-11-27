@@ -18,6 +18,8 @@ export type StoreLocation = {
   pickup: boolean;
   active: boolean;
   sort: number;
+  /** Fills Backroad Iron orders when routing is on. */
+  takes_routed: boolean;
 };
 
 /** Item id → location id → count. */
@@ -51,6 +53,7 @@ export function normalizeLocation(row: Record<string, unknown>): StoreLocation {
     pickup: row.pickup !== false,
     active: row.active !== false,
     sort: typeof row.sort === "number" ? row.sort : 0,
+    takes_routed: row.takes_routed === true,
   };
 }
 

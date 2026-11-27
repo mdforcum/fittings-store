@@ -24,8 +24,9 @@ export default async function Home({ searchParams }: { searchParams: Params }) {
   // A store showing only its own stock is limited to its dealer's shelves;
   // one showing the whole network sees everything, as the Backroad Iron store does.
   const ownDealer = storefront && storefront.stock_scope === "own" ? storefront.dealer_id : null;
-  const catalog = await getShopCatalog(ownDealer);
+  const poolDealer = storefront?.dealer_id ?? null;
+  const catalog = await getShopCatalog(ownDealer, poolDealer);
   const filterOn = look ? look.location_filter : catalog.settings.location_filter;
-  const shelves = filterOn ? await getShelves(ownDealer) : [];
+  const shelves = filterOn ? await getShelves(ownDealer, poolDealer) : [];
   return <Shop {...catalog} look={look} shelfStock={shelves} openCart={params.cart === "open"} />;
 }

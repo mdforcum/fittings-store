@@ -187,8 +187,26 @@ export type ShopCatalog = {
  * category tree, the numbers each item replaces, and which machines each
  * fits. The catalog tables are optional: without them the shop still sells.
  */
-export async function getShopCatalog(dealerId: string | null = null): Promise<ShopCatalog> {
+/**
+ * The shop's catalog. With ownDealer: only that dealer's shelves. Otherwise the
+ * shared pool for poolDealer's store (null: Backroad Iron's own store) —
+ * Backroad Iron's shelves plus dealers who take routed orders. Before routing
+ * is set up in the database, every shelf, as before.
+ */
+export async function getShopCatalog(dealerId: string | null = null, poolDealer: string | null = null): Promise<ShopCatalog> {
   const base = await getCatalog();
+  if (!dealerId && base.ok) {
+    const db0 = publicDb();
+    const pool = db0 ? await db0.rpc("fittings_pool_stock", { p_dealer: poolDealer }) : null;
+    if (pool && !pool.error) {
+      const inPool = new Map<string, number>();
+      for (const r of (pool.data as Array<{ product_id: string; qty: number }>) ?? []) inPool.set(r.product_id, Number(r.qty) || 0);
+      // A part kept only on shelves outside the pool belongs to another dealer's store: leave it off.
+      base.products = base.products
+        .filter((p) => inPool.has(p.id) || p.qty === 0)
+        .map((p) => ({ ...p, qty: Math.min(p.qty, inPool.get(p.id) ?? 0) }));
+    }
+  }
   // A dealer's storefront sells only what is on that dealer's shelves.
   if (dealerId && base.ok) {
     const db0 = publicDb();
@@ -240,10 +258,15 @@ export async function getShopCatalog(dealerId: string | null = null): Promise<Sh
  * location filter: one dealer's locations, or every dealer's. Empty before
  * supabase/add-storefront-options.sql has run.
  */
-export async function getShelves(dealerId: string | null): Promise<ShelfPlace[]> {
+export async function getShelves(dealerId: string | null, poolDealer: string | null = null): Promise<ShelfPlace[]> {
   const db = publicDb();
   if (!db) return [];
-  const { data, error } = await db.rpc("fittings_location_stock", { p_dealer: dealerId });
-  if (error) return [];
-  return shelfPlaces(data as Parameters<typeof shelfPlaces>[0]);
+  // A store showing only its dealer's stock lists that dealer's locations;
+  // any other store lists the locations in its pool.
+  let res = dealerId
+    ? await db.rpc("fittings_location_stock", { p_dealer: dealerId })
+    : await db.rpc("fittings_pool_location_stock", { p_dealer: poolDealer });
+  if (res.error && !dealerId) res = await db.rpc("fittings_location_stock", { p_dealer: null });
+  if (res.error) return [];
+  return shelfPlaces(res.data as Parameters<typeof shelfPlaces>[0]);
 }
