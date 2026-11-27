@@ -136,6 +136,10 @@ redeploy. See `.env.example`.
 | `SHIPPO_API_TOKEN` | Shippo API token (`shippo_test_...` or `shippo_live_...`) |
 | `ANTHROPIC_API_KEY` | Optional. Anthropic API key; switches on reading of survey photos. |
 | `ANTHROPIC_MODEL` | Optional. Model used to read photos. Defaults to `claude-sonnet-5-5`. |
+| `RESEND_API_KEY`, `ALERT_FROM_EMAIL` | Optional. Send dealer alerts by email (Resend). The from address must be on a domain verified in Resend, like `Backroad Iron <orders@backroadiron.com>`. |
+| `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM` | Optional. Send dealer alerts by text (Twilio). `TWILIO_FROM` is your Twilio number, like `+12175550100`. |
+| `CRON_SECRET` | Optional. Any long random string. Lets the Monday running-low job run (`vercel.json`). |
+| `SITE_URL` | Optional. The address used in alert links. Defaults to the production domain. |
 
 After Stripe's key is in place, open `/admin`, Settings, and press **Connect**
 next to "Stripe order reporting". That registers the webhook with Stripe and
@@ -151,6 +155,18 @@ with Backroad Iron migrations. Shoppers can read `fittings_products`,
 `fittings_settings` and the catalog structures (categories, cross-references,
 machines, fitment, kit parts, surcharges, documents). Stock counts at other places
 and everything else are reachable only with the secret key.
+
+## Running the network day to day (`supabase/add-operations.sql`)
+
+- **Ship-from per location.** Each location can have a street address and phone (Settings, Dealers and locations). A label ships from the location that pulled the most parts for the order, when it has a full address; otherwise from the shop-wide ship-from.
+- **Returns and refunds.** Orders, Return or refund (or Cancel and refund on an order still to ship). Parts go back on the shelf they came from, Stripe refunds the card, and each dealer's statement gets a reversing line at its original rates. Stripe keeps its card fee on a refund, so that is not reversed.
+- **Dealer page (`/dealer`).** Staff add logins per dealer in Settings. Dealers see orders with parts on their shelves, check parts off, print the pick list, mark each location's part of an order shipped with tracking, and see their month's statement. The order shows shipped once every location has shipped.
+- **Dealer alerts.** Each dealer has alert emails and a cell phone. A paid order that needs parts from a dealer's shelves queues a message; running-low lists go out Mondays. Messages always land in the outbox (Running low tab) and send when Resend or Twilio is set up.
+- **Counter sale tab.** Rings up a walk-in or phone sale at one location; the parts come off that location's count.
+- **Import spreadsheet** (Inventory). A CSV with Part number and Qty (plus Name for new parts and Price) sets counts at one location as a recount, after a preview.
+- **Running low tab.** Parts at or under the low-stock number, or with under about 30 days left at the last 30 days' pace, by location.
+
+Checks: `supabase/test-operations.sql` on a scratch database with every change loaded.
 
 ## Working on it
 

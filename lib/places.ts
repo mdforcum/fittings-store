@@ -3,7 +3,7 @@
 // the rules the screens share: checking a location, reading counts by
 // location, and saying where an order ships from.
 
-export type Dealer = { id: string; name: string; slug: string };
+export type Dealer = { id: string; name: string; slug: string; alert_email?: string; alert_phone?: string };
 
 export type StoreLocation = {
   id: string;
@@ -20,6 +20,10 @@ export type StoreLocation = {
   sort: number;
   /** Fills Backroad Iron orders when routing is on. */
   takes_routed: boolean;
+  /** Ship-from street and phone for labels; blank uses the shop-wide ship-from. */
+  street1: string;
+  street2: string;
+  phone: string;
 };
 
 /** Item id → location id → count. */
@@ -54,6 +58,9 @@ export function normalizeLocation(row: Record<string, unknown>): StoreLocation {
     active: row.active !== false,
     sort: typeof row.sort === "number" ? row.sort : 0,
     takes_routed: row.takes_routed === true,
+    street1: str(row.street1),
+    street2: str(row.street2),
+    phone: str(row.phone),
   };
 }
 

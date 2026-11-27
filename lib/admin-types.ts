@@ -93,7 +93,15 @@ export type Order = {
   from: Allocation[];
   /** The storefront the order came through; null for the Backroad Iron store. */
   storefront_id?: string | null;
+  /** Money refunded on returns and cancellations (not core credits). */
+  refunded_cents?: number;
+  /** Parts that came back, by item. */
+  returned?: Array<{ product_id: string; qty: number }>;
+  /** Each location's shipment, when locations ship on their own. */
+  shipments?: Shipment[];
 };
+
+export type Shipment = { location_id: string; carrier: string; tracking_number: string; tracking_url: string; shipped_by: string; shipped_at: string };
 
 export type CoreReturn = {
   id: number;
@@ -162,6 +170,8 @@ export type AdminData = {
   storefronts: Storefront[];
   /** Whether Backroad Iron orders go to dealers, and the cut. */
   routing: RoutingSettings;
+  /** Returns, counter sales, dealer logins and alerts (supabase/add-operations.sql). */
+  ops: { ready: boolean; email: boolean; text: boolean };
 };
 
 /** One line of an item's stock history. */

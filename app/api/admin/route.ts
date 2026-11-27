@@ -13,6 +13,7 @@ import {
   type ParcelPreset,
   type QuoteRequest,
   type ShipFrom,
+  type Shipment,
   type StockMove,
 } from "@/lib/admin-types";
 import { isAdmin, sameOrigin } from "@/lib/auth";
@@ -42,12 +43,13 @@ import {
   type Dealer,
 } from "@/lib/places";
 import { cardFee, getStripe } from "@/lib/payments";
+import { locationShipFrom, mainLocationId } from "@/lib/operations";
+import { ActionError, dealerContacts, opsStatus, runOps } from "@/lib/operations-server";
 import { T, adminDb, env, getConfig, json, setConfig } from "@/lib/server";
 import { buyLabel, freshLabelUrl, getRates } from "@/lib/shippo";
 
 export const dynamic = "force-dynamic";
 
-class ActionError extends Error {}
 /** The database change this action needs hasn't been run yet (missing function or column). */
 const notSetUp = (e: { code?: string; message?: string }) =>
   e.code === "PGRST202" || e.code === "42883" || e.code === "PGRST204" || /could not find the function/i.test(e.message ?? "");
@@ -104,21 +106,43 @@ async function loadData(db: SupabaseClient): Promise<AdminData> {
   // Charges and quotes came later: if their tables are missing the rest of the
   // back office still loads, with these lists empty.
   const orderIds = (o.data ?? []).map((r) => r.id as string);
-  const [ch, q, h, dl, lo, oh, al, sf] = await Promise.all([
+  const [ch, q, h, dl, lo, oh, al, sf, rt, sh] = await Promise.all([
     orderIds.length
       ? db.from("fittings_order_charges").select("*, returns:fittings_core_returns(*)").in("order_id", orderIds)
       : Promise.resolve({ data: [], error: null }),
     db.from("fittings_quote_requests").select("*").order("created_at", { ascending: false }).limit(200),
     db.rpc("fittings_held"),
     // Dealers and locations came later still: missing tables mean one place.
-    db.from("fittings_dealers").select("id, name, slug").order("created_at"),
+    db.from("fittings_dealers").select("*").order("created_at"),
     db.from("fittings_locations").select("*").eq("kind", "store"),
     db.from("fittings_onhand").select("product_id, location_id, qty").limit(50000),
     orderIds.length
       ? db.from("fittings_allocations").select("order_id, product_id, location_id, qty").in("order_id", orderIds)
       : Promise.resolve({ data: [], error: null }),
     db.from("fittings_storefronts").select("*").order("created_at"),
+    // Returns and per-location shipments came with supabase/add-operations.sql.
+    orderIds.length
+      ? db.from("fittings_returns").select("order_id, product_id, qty").in("order_id", orderIds)
+      : db.from("fittings_returns").select("order_id").limit(1),
+    orderIds.length
+      ? db.from("fittings_shipments").select("order_id, location_id, carrier, tracking_number, tracking_url, shipped_by, shipped_at").in("order_id", orderIds)
+      : Promise.resolve({ data: [], error: null }),
   ]);
+  const opsReady = !rt.error;
+  const returnedBy = new Map<string, Array<{ product_id: string; qty: number }>>();
+  for (const r of rt.error ? [] : ((rt.data ?? []) as Array<{ order_id: string; product_id: string; qty: number }>)) {
+    if (!r.product_id) continue;
+    const list = returnedBy.get(r.order_id) ?? [];
+    const cur = list.find((x) => x.product_id === r.product_id);
+    if (cur) cur.qty += r.qty;
+    else list.push({ product_id: r.product_id, qty: r.qty });
+    returnedBy.set(r.order_id, list);
+  }
+  const shippedBy = new Map<string, Shipment[]>();
+  for (const r of sh.error ? [] : ((sh.data ?? []) as Array<Shipment & { order_id: string }>)) {
+    const { order_id, ...rest } = r;
+    shippedBy.set(order_id, [...(shippedBy.get(order_id) ?? []), rest]);
+  }
   const placesReady = !dl.error && !lo.error && !oh.error;
   const fromBy = new Map<string, Allocation[]>();
   for (const a of al.error ? [] : ((al.data ?? []) as Allocation[])) fromBy.set(a.order_id, [...(fromBy.get(a.order_id) ?? []), a]);
@@ -149,13 +173,22 @@ async function loadData(db: SupabaseClient): Promise<AdminData> {
       ship_method: ord.ship_method === "pickup" ? "pickup" : "parcel",
       charges: (chargesBy.get(ord.id) ?? []).sort((a, b) => a.id - b.id),
       from: fromBy.get(ord.id) ?? [],
+      refunded_cents: ord.refunded_cents ?? 0,
+      returned: returnedBy.get(ord.id) ?? [],
+      shipments: shippedBy.get(ord.id) ?? [],
     })),
     quotes: q.error ? [] : ((q.data ?? []) as QuoteRequest[]),
     held: heldMap(h.error ? [] : (h.data as Array<{ product_id: unknown; held: unknown }>)),
     places: placesReady
       ? {
           ready: true,
-          dealers: (dl.data ?? []) as Dealer[],
+          dealers: ((dl.data ?? []) as Array<Record<string, unknown>>).map((d) => ({
+            id: String(d.id),
+            name: String(d.name ?? ""),
+            slug: String(d.slug ?? ""),
+            alert_email: typeof d.alert_email === "string" ? d.alert_email : "",
+            alert_phone: typeof d.alert_phone === "string" ? d.alert_phone : "",
+          })) as Dealer[],
           locations: ((lo.data ?? []) as Array<Record<string, unknown>>).map(normalizeLocation).sort(byLocationOrder),
           default_location_id: ((s.data as { default_location_id?: string | null } | null)?.default_location_id ?? null),
           onhand: onhandMap(oh.data as Array<{ product_id: unknown; location_id: unknown; qty: unknown }>),
@@ -163,6 +196,7 @@ async function loadData(db: SupabaseClient): Promise<AdminData> {
       : NO_PLACES,
     storefronts: sf.error ? [] : ((sf.data ?? []) as Array<Record<string, unknown>>).map(normalizeStorefront),
     routing: readRouting(s.data as Record<string, unknown> | null),
+    ops: opsStatus(opsReady),
     integrations: {
       stripe: modeOf(env.stripe, "_live_", "_test_"),
       webhook: webhook || !!process.env.STRIPE_WEBHOOK_SECRET,
@@ -222,6 +256,21 @@ async function must(q: PromiseLike<{ error: { message: string } | null }>) {
 }
 
 const now = () => new Date().toISOString();
+
+/**
+ * Where an order's label ships from: the location staff picked, or else the
+ * one that pulled the most parts, when it has its own street address;
+ * otherwise the shop-wide ship-from in Settings.
+ */
+async function labelFrom(db: SupabaseClient, orderId: string, fallback: ShipFrom, picked: string | null) {
+  const al = await db.from("fittings_allocations").select("order_id, product_id, location_id, qty").eq("order_id", orderId);
+  const locId = picked ?? mainLocationId(al.error ? [] : ((al.data ?? []) as Allocation[]));
+  if (!locId) return { from: fallback, own: false };
+  const loc = await db.from("fittings_locations").select("*").eq("id", locId).maybeSingle();
+  if (loc.error || !loc.data) return { from: fallback, own: false };
+  const dealer = await db.from("fittings_dealers").select("name").eq("id", loc.data.dealer_id as string).maybeSingle();
+  return locationShipFrom(normalizeLocation(loc.data as Record<string, unknown>), (dealer.data?.name as string) ?? fallback.company, fallback);
+}
 
 async function run(action: string, a: Payload, db: SupabaseClient, origin: string) {
   const id = str(a.id, 80);
@@ -322,7 +371,9 @@ async function run(action: string, a: Payload, db: SupabaseClient, origin: strin
       const name = str(a.name, 80).trim();
       if (!name) fail("Give the dealer a name.");
       if (isId(a.dealer_id)) {
-        await must(db.from("fittings_dealers").update({ name }).eq("id", a.dealer_id as string));
+        // Alert contacts: only sent once supabase/add-operations.sql has run.
+        const contacts = typeof a.alert_email === "string" || typeof a.alert_phone === "string" ? dealerContacts(a) : {};
+        await must(db.from("fittings_dealers").update({ name, ...contacts }).eq("id", a.dealer_id as string));
         return {};
       }
       const slug = slugify(name);
@@ -476,6 +527,8 @@ async function run(action: string, a: Payload, db: SupabaseClient, origin: strin
         sort: int(a.sort) ?? (locId ? others.find((o) => o.id === locId)?.sort ?? 0 : others.length),
         // Only sent once routing is set up in the database.
         ...(typeof a.takes_routed === "boolean" ? { takes_routed: a.takes_routed } : {}),
+        // Ship-from street and phone: only sent once supabase/add-operations.sql has run.
+        ...(typeof a.street1 === "string" ? { street1: str(a.street1, 80), street2: str(a.street2, 80), phone: str(a.phone, 30) } : {}),
       };
       const problem = locationProblem({ ...row, id: locId }, others);
       if (problem) fail(problem);
@@ -485,6 +538,7 @@ async function run(action: string, a: Payload, db: SupabaseClient, origin: strin
         if (!cur) fail("That location is gone. Reload the page.");
         await must(db.from("fittings_locations").update(row).eq("id", locId).eq("kind", "store"));
       } else {
+        if (row.street1 && !row.city) fail("Add the city for this address.");
         const ins = await db.from("fittings_locations").insert({ ...row, kind: "store" }).select("id").single();
         if (ins.error) fail(ins.error.message);
         savedId = ins.data!.id as string;
@@ -790,9 +844,9 @@ async function run(action: string, a: Payload, db: SupabaseClient, origin: strin
       const config = cleanConfig(
         ((await db.from(T.config).select("key, value")).data ?? []) as Array<{ key: string; value: unknown }>,
       );
-      const from = config.ship_from;
+      const { from, own } = await labelFrom(db, o.id, config.ship_from, isId(a.location_id) ? (a.location_id as string) : null);
       if (!from.name || !from.street1 || !from.city || !from.state || !from.zip) {
-        fail("Add your ship-from address under Settings first.");
+        fail("Add your ship-from address under Settings first, or a street address on the location.");
       }
       const parcel = (a.parcel ?? {}) as Payload;
       const dims = {
@@ -806,7 +860,7 @@ async function run(action: string, a: Payload, db: SupabaseClient, origin: strin
       }
       const quote = await getRates(from, to, dims, o.email);
       if (quote.rates.length === 0) fail(quote.note || "No rates came back for that package. Check the address and size.");
-      return { rates: quote.rates };
+      return { rates: quote.rates, from: `${from.name}, ${from.city} ${from.state}`, own_address: own };
     }
 
     case "label.buy": {
@@ -841,7 +895,7 @@ async function run(action: string, a: Payload, db: SupabaseClient, origin: strin
     }
 
     default:
-      return fail("Unknown action.");
+      return (await runOps(action, a, db)) ?? fail("Unknown action.");
   }
 }
 

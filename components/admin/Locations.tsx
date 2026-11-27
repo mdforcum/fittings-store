@@ -95,6 +95,7 @@ function DealerBlock({ dealer, data, act, say }: { dealer: Dealer; data: AdminDa
               loc={l}
               isDefault={data.places.default_location_id === l.id}
               routable={!!data.routing?.ready && data.routing.house_dealer_id !== dealer.id}
+              address={!!data.ops?.ready}
               act={act}
               say={say}
             />
@@ -106,6 +107,7 @@ function DealerBlock({ dealer, data, act, say }: { dealer: Dealer; data: AdminDa
           dealerId={dealer.id}
           isDefault={false}
           routable={!!data.routing?.ready && data.routing.house_dealer_id !== dealer.id}
+          address={!!data.ops?.ready}
           act={act}
           say={say}
           onDone={() => setAdding(false)}
@@ -115,6 +117,8 @@ function DealerBlock({ dealer, data, act, say }: { dealer: Dealer; data: AdminDa
           Add a location for {dealer.name}
         </button>
       )}
+      {data.ops?.ready && <DealerContacts dealer={dealer} data={data} act={act} say={say} />}
+      {data.ops?.ready && data.routing?.house_dealer_id !== dealer.id && <DealerLogins dealer={dealer} act={act} say={say} />}
       <StorefrontBlock dealer={dealer} data={data} act={act} say={say} />
     </section>
   );
@@ -125,6 +129,7 @@ export function LocationForm({
   loc,
   isDefault,
   routable = false,
+  address = false,
   act,
   say,
   onDone,
@@ -135,6 +140,8 @@ export function LocationForm({
   isDefault: boolean;
   /** An outside dealer's location, once routing is set up: it may opt in to Backroad Iron orders. */
   routable?: boolean;
+  /** Show the ship-from street and phone (once the operations database change has run). */
+  address?: boolean;
   act: Act;
   say: Say;
   onDone?: () => void;
@@ -153,9 +160,12 @@ export function LocationForm({
     active: loc?.active ?? true,
     make_default: false,
     takes_routed: loc?.takes_routed ?? false,
+    street1: loc?.street1 ?? "",
+    street2: loc?.street2 ?? "",
+    phone: loc?.phone ?? "",
   });
   const [busy, setBusy] = useState(false);
-  const set = (k: "name" | "code" | "city" | "state" | "zip") => (e: React.ChangeEvent<HTMLInputElement>) =>
+  const set = (k: "name" | "code" | "city" | "state" | "zip" | "street1" | "street2" | "phone") => (e: React.ChangeEvent<HTMLInputElement>) =>
     setF({ ...f, [k]: k === "code" ? normCode(e.target.value) : k === "state" ? e.target.value.toUpperCase().slice(0, 2) : e.target.value });
   const tick = (k: "ships" | "pickup" | "active" | "make_default" | "takes_routed") => (e: React.ChangeEvent<HTMLInputElement>) =>
     setF({ ...f, [k]: e.target.checked });
@@ -163,10 +173,11 @@ export function LocationForm({
   async function save(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
-    const { takes_routed, ...rest } = f;
+    const { takes_routed, street1, street2, phone, ...rest } = f;
     const done = await act("location.save", {
       ...rest,
       ...(routable ? { takes_routed } : {}),
+      ...(address ? { street1, street2, phone } : {}),
       dealer_id: dealerId,
       ...(loc ? { location_id: loc.id } : {}),
     });
@@ -190,6 +201,18 @@ export function LocationForm({
           <input id={`lc-${key}`} maxLength={6} autoComplete="off" placeholder="EFF" value={f.code} onChange={set("code")} />
         </label>
       </div>
+      {address && (
+        <div className="two">
+          <label htmlFor={`ls1-${key}`}>
+            Street address <span className="hint">(labels ship from here)</span>
+            <input id={`ls1-${key}`} maxLength={80} autoComplete="off" value={f.street1} onChange={set("street1")} />
+          </label>
+          <label htmlFor={`ls2-${key}`}>
+            Suite or building <span className="hint">(optional)</span>
+            <input id={`ls2-${key}`} maxLength={80} autoComplete="off" value={f.street2} onChange={set("street2")} />
+          </label>
+        </div>
+      )}
       <div className="three">
         <label htmlFor={`lcity-${key}`}>
           City
@@ -204,6 +227,12 @@ export function LocationForm({
           <input id={`lzip-${key}`} inputMode="numeric" maxLength={5} autoComplete="off" value={f.zip} onChange={set("zip")} />
         </label>
       </div>
+      {address && (
+        <label htmlFor={`lph-${key}`} className="loc-phone">
+          Phone for the carrier <span className="hint">(optional)</span>
+          <input id={`lph-${key}`} type="tel" maxLength={30} autoComplete="off" value={f.phone} onChange={set("phone")} />
+        </label>
+      )}
       <div className="loc-ticks">
         <label>
           <input type="checkbox" checked={f.ships} onChange={tick("ships")} /> Ships orders
@@ -238,6 +267,131 @@ export function LocationForm({
         )}
       </div>
     </form>
+  );
+}
+
+/** Where a dealer's order alerts go: email and a cell phone for texts. */
+function DealerContacts({ dealer, data, act, say }: { dealer: Dealer; data: AdminData; act: Act; say: Say }) {
+  const [email, setEmail] = useState(dealer.alert_email ?? "");
+  const [phone, setPhone] = useState(dealer.alert_phone ?? "");
+  const [busy, setBusy] = useState(false);
+  const changed = email !== (dealer.alert_email ?? "") || phone !== (dealer.alert_phone ?? "");
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    const done = await act("dealer.save", { dealer_id: dealer.id, name: dealer.name, alert_email: email, alert_phone: phone });
+    setBusy(false);
+    if (done) say("Alert contacts saved");
+  }
+  return (
+    <form className="form loc-form" onSubmit={save} aria-label={`${dealer.name} alerts`}>
+      <h3>Order alerts</h3>
+      <div className="two">
+        <label htmlFor={`ae-${dealer.id}`}>
+          Email <span className="hint">(up to 3, commas between)</span>
+          <input id={`ae-${dealer.id}`} maxLength={300} autoComplete="off" inputMode="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+        </label>
+        <label htmlFor={`ap-${dealer.id}`}>
+          Cell phone for texts
+          <input id={`ap-${dealer.id}`} type="tel" maxLength={30} autoComplete="off" value={phone} onChange={(e) => setPhone(e.target.value)} />
+        </label>
+      </div>
+      <p className="hint">
+        {data.ops.email || data.ops.text
+          ? `Sends by ${[data.ops.email && "email", data.ops.text && "text"].filter(Boolean).join(" and ")} when an order needs parts from ${dealer.name}'s shelves, and a running-low list each week.`
+          : "Messages are saved but not sent until an email service (Resend) or text service (Twilio) is set up in Vercel. Dealers still see every order on their dealer page."}
+      </p>
+      <div className="inline">
+        <button type="submit" className="btn sm" disabled={busy || !changed}>
+          {busy ? "Saving…" : "Save alert contacts"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+type DealerLogin = { id: string; email: string; name: string; disabled: boolean; last_login_at: string | null };
+
+/** People at a dealer who can sign in to the dealer page to see and ship their orders. */
+function DealerLogins({ dealer, act, say }: { dealer: Dealer; act: Act; say: Say }) {
+  const [users, setUsers] = useState<DealerLogin[] | null>(null);
+  const [f, setF] = useState({ email: "", name: "", password: "" });
+  const [busy, setBusy] = useState(false);
+  async function load() {
+    const r = await act("dealer_user.list", { dealer_id: dealer.id });
+    if (r) setUsers((r.users as DealerLogin[]) ?? []);
+  }
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    const r = await act("dealer_user.save", { dealer_id: dealer.id, ...f });
+    setBusy(false);
+    if (r) {
+      say(r.reset ? `New password set for ${f.email}` : `${f.email} can sign in now. Send them the dealer page link and the password.`);
+      setF({ email: "", name: "", password: "" });
+      await load();
+    }
+  }
+  async function toggle(u: DealerLogin) {
+    const r = await act("dealer_user.disable", { user_id: u.id, disabled: !u.disabled });
+    if (r) {
+      say(u.disabled ? `${u.email} can sign in again` : `${u.email} can't sign in now`);
+      await load();
+    }
+  }
+  return (
+    <div className="loc-form loc-logins">
+      <h3>Dealer page logins</h3>
+      <p className="hint">
+        People at {dealer.name} sign in at <span className="mono">/dealer</span> to see orders to pull, print pick lists, mark them shipped and
+        see their statement.
+      </p>
+      {users == null ? (
+        <button type="button" className="btn ghost sm" onClick={load}>
+          Show logins
+        </button>
+      ) : (
+        <>
+          {users.length === 0 && <p className="hint">No logins yet.</p>}
+          <ul className="loc-list">
+            {users.map((u) => (
+              <li key={u.id} className="inline">
+                <span>
+                  {u.name ? `${u.name}, ` : ""}
+                  <span className="mono">{u.email}</span>
+                </span>
+                <span className={`pill ${u.disabled ? "muted" : "ok"}`}>{u.disabled ? "Off" : u.last_login_at ? "Signed in before" : "Not signed in yet"}</span>
+                <button type="button" className="btn ghost sm" onClick={() => toggle(u)}>
+                  {u.disabled ? "Turn on" : "Turn off"}
+                </button>
+              </li>
+            ))}
+          </ul>
+          <form className="form" onSubmit={save} aria-label={`Add a login for ${dealer.name}`}>
+            <div className="three">
+              <label htmlFor={`ue-${dealer.id}`}>
+                Email
+                <input id={`ue-${dealer.id}`} type="email" autoComplete="off" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} />
+              </label>
+              <label htmlFor={`un-${dealer.id}`}>
+                Name
+                <input id={`un-${dealer.id}`} maxLength={80} autoComplete="off" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />
+              </label>
+              <label htmlFor={`up-${dealer.id}`}>
+                Password <span className="hint">(10 or more)</span>
+                <input id={`up-${dealer.id}`} type="text" autoComplete="new-password" value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} />
+              </label>
+            </div>
+            <p className="hint">Using an email that&apos;s already here sets a new password for it.</p>
+            <div className="inline">
+              <button type="submit" className="btn sm" disabled={busy || !f.email || f.password.length < 10}>
+                {busy ? "Saving…" : "Save login"}
+              </button>
+            </div>
+          </form>
+        </>
+      )}
+    </div>
   );
 }
 

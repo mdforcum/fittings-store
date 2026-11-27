@@ -3,6 +3,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import type { ActionReply, AdminData } from "@/lib/admin-types";
+import Alerts from "./admin/Alerts";
+import Counter from "./admin/Counter";
 import Hoses from "./admin/Hoses";
 import Inventory from "./admin/Inventory";
 import Machines from "./admin/Machines";
@@ -18,10 +20,12 @@ import { Toast, type ToastState } from "./ui";
 export type Act = (action: string, payload?: Record<string, unknown>) => Promise<Record<string, unknown> | null>;
 export type Say = (text: string, bad?: boolean) => void;
 
-type Tab = "inventory" | "spots" | "machines" | "orders" | "statements" | "quotes" | "hoses" | "survey" | "photos" | "settings";
+type Tab = "inventory" | "counter" | "alerts" | "spots" | "machines" | "orders" | "statements" | "quotes" | "hoses" | "survey" | "photos" | "settings";
 
 const TAB_NAMES: Record<Tab, string> = {
   inventory: "Inventory",
+  counter: "Counter sale",
+  alerts: "Running low",
   spots: "Shelf map",
   machines: "Machines",
   orders: "Orders",
@@ -130,6 +134,8 @@ export default function Admin() {
           </p>
         )}
         {data && tab === "inventory" && <Inventory data={data} act={act} say={say} reload={reload} />}
+        {data && tab === "counter" && <Counter data={data} act={act} say={say} />}
+        {data && tab === "alerts" && <Alerts data={data} act={act} say={say} />}
         {data && tab === "spots" && <Spots products={data.products} say={say} />}
         {data && tab === "orders" && <Orders data={data} act={act} say={say} />}
         {data && tab === "statements" && <Statements data={data} act={act} say={say} />}

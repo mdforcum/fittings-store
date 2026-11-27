@@ -5,6 +5,7 @@ import { CORE_FULL_DAYS, CORE_PARTIAL_DAYS, coreCredit, storeDate } from "@/lib/
 import { money } from "@/lib/catalog";
 import type { Act, Say } from "../Admin";
 import { shipsFrom } from "@/lib/places";
+import { refundFor, stillOut } from "@/lib/operations";
 
 type Props = { data: AdminData; act: Act; say: Say };
 type View = "open" | "shipped" | "all";
@@ -85,6 +86,9 @@ function OrderCard({ o, data, act, say }: { o: Order; data: AdminData; act: Act;
   const [labelUrl, setLabelUrl] = useState("");
   const [tracking, setTracking] = useState("");
   const [confirmCancel, setConfirmCancel] = useState(false);
+  const [rateFrom, setRateFrom] = useState("");
+  const [returning, setReturning] = useState<"" | "return" | "cancel">("");
+  const opsOn = !!data.ops?.ready;
   const shippoOn = data.integrations.shippo !== null;
   const pieces = o.items.reduce((n, i) => n + i.qty, 0);
   const tone = o.status === "paid" ? "hold" : o.status === "shipped" ? "ok" : "muted";
@@ -107,6 +111,7 @@ function OrderCard({ o, data, act, say }: { o: Order; data: AdminData; act: Act;
     });
     setBusy("");
     if (done && Array.isArray(done.rates)) setRates(done.rates as RateQuote[]);
+    if (done && typeof done.from === "string") setRateFrom(`${done.own_address ? "" : "Shop-wide address: "}${done.from}`);
   }
 
   async function buy(rate: RateQuote) {
@@ -143,6 +148,7 @@ function OrderCard({ o, data, act, say }: { o: Order; data: AdminData; act: Act;
   }
 
   async function cancel() {
+    if (opsOn) return setReturning("cancel");
     if (!confirmCancel) return setConfirmCancel(true);
     const done = await act("order.update", { id: o.id, status: "cancelled" });
     if (done) say("Order cancelled. Refund it in Stripe and add the stock back by hand.");
@@ -270,6 +276,28 @@ function OrderCard({ o, data, act, say }: { o: Order; data: AdminData; act: Act;
         </div>
       )}
 
+      {(o.shipments?.length ?? 0) > 0 && (
+        <ul className="ships-from order-shipments">
+          {o.shipments!.map((sh) => (
+            <li key={sh.location_id}>
+              {data.places.locations.find((l) => l.id === sh.location_id)?.name ?? "A location"}: {sh.carrier} <span className="mono">{sh.tracking_number}</span>
+              {sh.shipped_by ? ` · by ${sh.shipped_by}` : ""} · {when(sh.shipped_at)}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {(o.refunded_cents ?? 0) > 0 && <p className="ships-from">Refunded {money(o.refunded_cents ?? 0)}</p>}
+
+      {opsOn && (o.status === "paid" || o.status === "shipped" || o.status === "cancelled") && !returning && o.status !== "paid" && (
+        <div className="inline">
+          <button type="button" className="btn ghost sm" onClick={() => setReturning("return")}>
+            Return or refund
+          </button>
+        </div>
+      )}
+      {returning && <ReturnPanel o={o} cancelling={returning === "cancel"} act={act} say={say} onDone={() => setReturning("")} />}
+
       {labelUrl.startsWith("https://") && (
         <p>
           <a className="btn" href={labelUrl} target="_blank" rel="noreferrer">
@@ -342,7 +370,7 @@ function OrderCard({ o, data, act, say }: { o: Order; data: AdminData; act: Act;
                 <div className="rates">
                   <p className="hint">
                     The customer paid {money(o.shipping_cents)} for shipping. Buying a label charges your Shippo
-                    account.
+                    account.{rateFrom ? ` Ships from ${rateFrom}.` : ""}
                   </p>
                   {rates.slice(0, 8).map((r) => (
                     <div className="rate" key={r.id}>
@@ -371,8 +399,13 @@ function OrderCard({ o, data, act, say }: { o: Order; data: AdminData; act: Act;
               <button type="button" className="btn ghost sm" disabled={busy === "ship"} onClick={markShipped}>
                 Mark shipped
               </button>
+              {opsOn && (
+                <button type="button" className="btn ghost sm" onClick={() => setReturning("return")}>
+                  Refund part of it
+                </button>
+              )}
               <button type="button" className="btn danger sm" onClick={cancel}>
-                {confirmCancel ? "Tap again to cancel order" : "Cancel order"}
+                {confirmCancel ? "Tap again to cancel order" : opsOn ? "Cancel and refund" : "Cancel order"}
               </button>
             </div>
           </div>
@@ -465,5 +498,124 @@ function CoreLine({ c, sold, tz, act, say }: { c: OrderCharge; sold: Date; tz: s
         </div>
       )}
     </li>
+  );
+}
+
+/**
+ * Parts coming back, a refund, or both. Puts parts back on the shelf they
+ * came from, refunds the card through Stripe, and reverses dealer lines.
+ */
+function ReturnPanel({ o, cancelling, act, say, onDone }: { o: Order; cancelling: boolean; act: Act; say: Say; onDone: () => void }) {
+  const out = stillOut(o.items, o.returned ?? []);
+  const ids = [...new Set(o.items.map((i) => i.product_id))];
+  const [qty, setQty] = useState<Record<string, string>>(() => Object.fromEntries(ids.map((id) => [id, cancelling ? String(out[id] ?? 0) : "0"])));
+  const [restock, setRestock] = useState(true);
+  const [withShipping, setWithShipping] = useState(cancelling);
+  const [reason, setReason] = useState(cancelling ? "Cancelled" : "");
+  const [amount, setAmount] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const lines = ids.map((id) => ({ product_id: id, qty: Math.max(0, Math.min(out[id] ?? 0, Number.parseInt(qty[id] || "0", 10) || 0)) })).filter((l) => l.qty > 0);
+  const plan = refundFor(
+    {
+      items: o.items,
+      subtotal_cents: o.subtotal_cents,
+      shipping_cents: o.shipping_cents,
+      tax_cents: o.tax_cents,
+      total_cents: o.total_cents,
+      refunded_cents: o.refunded_cents ?? 0,
+      core_refunded_cents: (o.charges ?? []).reduce((s, c) => s + c.refunded_cents, 0),
+    },
+    lines,
+    withShipping,
+  );
+  const typed = amount == null ? plan.total : Math.round(Number(amount.replace(/[$,\s]/g, "")) * 100);
+  const badAmount = !Number.isFinite(typed) || typed < 0 || typed > plan.left;
+
+  async function send() {
+    if (badAmount) return say(`Enter a refund from $0 to ${money(plan.left)}.`, true);
+    if (!lines.length && typed === 0 && !cancelling) return say("Pick parts coming back, a refund, or both.", true);
+    setBusy(true);
+    const done = await act("order.return", { order_id: o.id, lines, restock, refund_shipping: withShipping, refund_cents: typed, reason, cancel: cancelling });
+    setBusy(false);
+    if (done) {
+      say(
+        [typed > 0 ? `Refunded ${money(typed)} to the card` : "", lines.length ? (restock ? "parts back on the shelf" : "return recorded") : "", cancelling ? "order cancelled" : ""]
+          .filter(Boolean)
+          .join(", ")
+          .replace(/^./, (c) => c.toUpperCase()) + ".",
+      );
+      onDone();
+    }
+  }
+
+  return (
+    <div className="panel return-panel">
+      <h3>{cancelling ? "Cancel and refund" : "Return or refund"}</h3>
+      <ul className="return-lines">
+        {ids.map((id) => {
+          const it = o.items.find((i) => i.product_id === id)!;
+          const left = out[id] ?? 0;
+          return (
+            <li key={id}>
+              <label htmlFor={`rq-${o.id}-${id}`}>
+                <span>
+                  {it.part_number || it.name}
+                  {it.part_number ? ` · ${it.name}` : ""}
+                </span>
+                <span className="hint">{left ? `${left} can come back` : "All back"}</span>
+              </label>
+              <input
+                id={`rq-${o.id}-${id}`}
+                inputMode="numeric"
+                disabled={!left}
+                value={qty[id] ?? "0"}
+                onChange={(e) => {
+                  setQty({ ...qty, [id]: e.target.value.replace(/\D/g, "") });
+                  setAmount(null);
+                }}
+              />
+            </li>
+          );
+        })}
+      </ul>
+      <div className="loc-ticks">
+        <label>
+          <input type="checkbox" checked={restock} onChange={(e) => setRestock(e.target.checked)} /> Put the parts back on the shelf
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            checked={withShipping}
+            onChange={(e) => {
+              setWithShipping(e.target.checked);
+              setAmount(null);
+            }}
+          />{" "}
+          Refund shipping ({money(o.shipping_cents)})
+        </label>
+      </div>
+      <div className="two">
+        <label htmlFor={`ra-${o.id}`}>
+          Refund to the card <span className="hint">(up to {money(plan.left)})</span>
+          <input id={`ra-${o.id}`} inputMode="decimal" value={amount ?? (plan.total / 100).toFixed(2)} onChange={(e) => setAmount(e.target.value)} aria-invalid={badAmount} />
+        </label>
+        <label htmlFor={`rr-${o.id}`}>
+          Reason <span className="hint">(shows in the stock history)</span>
+          <input id={`rr-${o.id}`} maxLength={200} autoComplete="off" value={reason} onChange={(e) => setReason(e.target.value)} />
+        </label>
+      </div>
+      <p className="hint">
+        Works out to {money(plan.parts)} for parts{plan.tax ? `, ${money(plan.tax)} tax` : ""}
+        {plan.shipping ? `, ${money(plan.shipping)} shipping` : ""}. Stripe keeps its card fee on a refund. Dealer statements get a matching line.
+      </p>
+      <div className="inline">
+        <button type="button" className="btn" disabled={busy || badAmount} onClick={send}>
+          {busy ? "Working…" : typed > 0 ? `Refund ${money(typed)}${cancelling ? " and cancel" : ""}` : cancelling ? "Cancel order" : "Record return"}
+        </button>
+        <button type="button" className="btn ghost" onClick={onDone}>
+          Never mind
+        </button>
+      </div>
+    </div>
   );
 }

@@ -1,5 +1,6 @@
 // Stripe: client, and the one function that turns a paid checkout into a paid order.
 import Stripe from "stripe";
+import { queueOrderAlerts } from "./notify";
 import { T, adminDb, env } from "./server";
 
 export function getStripe(): Stripe | null {
@@ -70,6 +71,8 @@ export async function fulfillSession(
     p_details: { ...details, card_fee_cents: await cardFee(details.stripe_payment_intent) },
   });
   if (error) throw new Error(`fulfill failed: ${error.message}`);
+  // Dealers with parts to pull hear about it (never blocks the order).
+  await queueOrderAlerts(adminDb(), orderId);
   return { orderId, paid: true };
 }
 

@@ -27,7 +27,7 @@ export type SettlementRow = {
   paid_note: string;
 };
 
-export type SettlementKind = "routed" | "storefront" | "referral" | "network" | "mixed";
+export type SettlementKind = "routed" | "storefront" | "referral" | "network" | "mixed" | "reversal";
 
 export const KIND_LABEL: Record<SettlementKind, string> = {
   routed: "Backroad Iron sale",
@@ -35,13 +35,14 @@ export const KIND_LABEL: Record<SettlementKind, string> = {
   referral: "Own store, shipped by others",
   network: "Another dealer's sale",
   mixed: "Own store, partly shipped by others",
+  reversal: "Return or refund",
 };
 
 /** A ledger row as stored, with fields added later read as zero. */
 export function readSettlement(r: Record<string, unknown>, orderNumber: number | null): SettlementRow {
   const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
   const nn = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
-  const kind = (["routed", "storefront", "referral", "network", "mixed"] as const).find((k) => k === r.kind) ?? "routed";
+  const kind = (["routed", "storefront", "referral", "network", "mixed", "reversal"] as const).find((k) => k === r.kind) ?? "routed";
   return {
     order_id: String(r.order_id),
     order_number: orderNumber,

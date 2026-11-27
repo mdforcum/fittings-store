@@ -17,6 +17,7 @@ import {
 import type { Act, Say } from "../Admin";
 import { Modal, Picture } from "../ui";
 import DetailsEditor from "./Details";
+import ImportStock from "./ImportStock";
 
 type Props = { data: AdminData; act: Act; say: Say; reload: () => Promise<void> };
 type Filter = "all" | "live" | "out" | "noprice";
@@ -56,6 +57,7 @@ export default function Inventory({ data, act, say, reload }: Props) {
   const [onlyHere, setOnlyHere] = useState(false);
   const [adding, setAdding] = useState(false);
   const [moving, setMoving] = useState(false);
+  const [importing, setImporting] = useState(false);
   const here = places.locations.find((l) => l.id === at);
   const qtyOf = (p: Product) => (at ? (places.onhand[p.id]?.[at] ?? 0) : p.qty);
 
@@ -133,6 +135,11 @@ export default function Inventory({ data, act, say, reload }: Props) {
             {places.locations.length > 1 && (
               <button type="button" className="btn ghost sm" onClick={() => setMoving(true)}>
                 Move stock
+              </button>
+            )}
+            {data.ops?.ready && (
+              <button type="button" className="btn ghost sm" onClick={() => setImporting(true)}>
+                Import spreadsheet
               </button>
             )}
           </div>
@@ -241,6 +248,7 @@ export default function Inventory({ data, act, say, reload }: Props) {
           }}
         />
       )}
+      {importing && <ImportStock products={data.products} places={places} at={at} act={act} say={say} onClose={() => setImporting(false)} />}
       {moving && <MoveStock products={data.products} places={places} from={at} act={act} say={say} onClose={() => setMoving(false)} />}
       {stockOf && data.products.some((p) => p.id === stockOf) && (
         <StockHistory

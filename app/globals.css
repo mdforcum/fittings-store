@@ -545,3 +545,69 @@ dialog.sheet { margin: 0 0 0 auto; width: min(440px, 100%); max-width: 100%; hei
   .st-table td { display: flex; justify-content: space-between; gap: 12px; border: 0; padding: 6px 0; text-align: right; }
   .st-table td::before { content: attr(data-label); color: var(--muted); font-family: var(--sans, inherit); text-align: left; }
 }
+
+/* Dealer portal */
+.portal { font-size: 1.05rem; }
+.portal .btn, .portal .tab, .portal select, .portal input { min-height: 48px; }
+.po-top { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: end; gap: 12px; padding: 18px 0 8px; }
+.po-top-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.po-tabs { display: flex; gap: 6px; flex-wrap: wrap; border-bottom: 1px solid var(--rule); padding-bottom: 8px; margin-bottom: 12px; }
+.po-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 14px; }
+.po-card { border: 1px solid var(--rule); background: var(--surface); padding: 14px; display: grid; gap: 12px; break-inside: avoid; }
+.po-head { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+.po-head h2 { font: 800 1.3rem/1.1 var(--display); text-transform: uppercase; }
+.po-stop { display: grid; gap: 10px; padding-top: 10px; border-top: 1px solid var(--rule); }
+.po-stop h3, .po-to h3 { font: 600 1rem/1.3 var(--body); }
+.po-lines { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
+.po-check { display: flex; align-items: center; gap: 12px; min-height: 48px; }
+.po-check input { width: 26px; height: 26px; flex: none; }
+.po-qty { font: 700 1.3rem/1 var(--mono); min-width: 2ch; text-align: right; }
+.po-ship { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; align-items: end; }
+.po-ship label, .po-month { display: grid; gap: 4px; font-weight: 600; }
+.po-to pre { font: inherit; white-space: pre-wrap; margin: 0; }
+.po-statement { display: grid; gap: 12px; }
+.po-month { max-width: 260px; }
+.po-total { font-size: 1.15rem; }
+.po-rows { list-style: none; padding: 0; margin: 0; display: grid; }
+.po-rows li { display: grid; grid-template-columns: 5rem 1fr auto; gap: 4px 12px; padding: 10px 0; border-bottom: 1px solid var(--rule); }
+.po-rows li .hint { grid-column: 2 / -1; }
+.po-help { margin: 24px 0; }
+@media (max-width: 640px) { .portal { font-size: 1.125rem; } }
+@media print {
+  .po-top-actions, .po-tabs, .po-ship, .po-help, .po-statement { display: none; }
+  .po-card { border-color: #000; }
+  .po-check input { appearance: none; -webkit-appearance: none; border: 2px solid #000; border-radius: 2px; }
+}
+.loc-phone { display: grid; gap: 4px; max-width: 320px; }
+.loc-logins { display: grid; gap: 10px; }
+.loc-logins .inline { flex-wrap: wrap; }
+.return-panel { display: grid; gap: 12px; }
+.return-lines { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+.return-lines li { display: grid; grid-template-columns: 1fr 6rem; gap: 10px; align-items: center; }
+.return-lines label { display: grid; gap: 2px; }
+.order-shipments { list-style: none; padding: 0; display: grid; gap: 4px; }
+.imp-list { list-style: none; padding: 0; margin: 0; display: grid; max-height: 50vh; overflow: auto; border: 1px solid var(--rule); }
+.imp-list li { display: grid; grid-template-columns: 4.5rem 1fr 1fr; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--rule); }
+.imp-list li.bad { background: var(--bad-bg); }
+.bad-text { color: var(--bad); }
+@media (max-width: 640px) { .imp-list li { grid-template-columns: 1fr; } }
+.counter, .alerts { display: grid; gap: 12px; }
+.counter-top { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.ct-matches { list-style: none; padding: 0; margin: 0; display: grid; gap: 4px; }
+.ct-match { width: 100%; min-height: 48px; display: flex; justify-content: space-between; gap: 10px; align-items: center; padding: 8px 12px; border: 1px solid var(--rule); background: var(--surface); color: var(--ink); text-align: left; cursor: pointer; font: inherit; }
+.ct-match:hover, .ct-match:focus-visible { border-color: var(--primary); }
+.ct-lines { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+.ct-lines li { display: grid; grid-template-columns: 1fr 5rem 7rem auto; gap: 10px; align-items: end; padding: 10px; border: 1px solid var(--rule); background: var(--sunken); }
+.ct-lines label { display: grid; gap: 4px; font-weight: 600; }
+.ct-total { font-size: 1.2rem; }
+.ct-recent-head { margin-top: 18px; }
+.ct-recent, .low-list { list-style: none; padding: 0; margin: 0; display: grid; }
+.ct-recent li { display: grid; grid-template-columns: 4rem 1fr 1fr auto; gap: 6px 12px; padding: 10px 0; border-bottom: 1px solid var(--rule); }
+.low-list li { display: grid; grid-template-columns: 2fr 1fr 2fr; gap: 6px 12px; padding: 10px 0; border-bottom: 1px solid var(--rule); align-items: center; }
+@media (max-width: 640px) {
+  .ct-lines li { grid-template-columns: 1fr 1fr; }
+  .ct-lines li .ct-name { grid-column: 1 / -1; }
+  .ct-recent li, .low-list li { grid-template-columns: 1fr; }
+}
+.order-shipments { display: grid; gap: 4px; }
+.order-shipments li { display: block; }
