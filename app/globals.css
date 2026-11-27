@@ -627,3 +627,20 @@ dialog.sheet { margin: 0 0 0 auto; width: min(440px, 100%); max-width: 100%; hei
 @media print { .po-label, .po-notice, .po-done .btn { display: none; } }
 .po-box label { min-width: 0; }
 .po-box input { width: 100%; min-width: 0; box-sizing: border-box; }
+
+/* A part's own page */
+.part-page { padding-bottom: 48px; }
+.crumbs { padding: 16px 0 10px; color: var(--muted); font-size: .95rem; }
+.part-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 28px; align-items: start; }
+.part-info { display: grid; gap: 14px; }
+.part-info h1 { font: 800 2rem/1.1 var(--display); text-transform: uppercase; letter-spacing: .02em; overflow-wrap: anywhere; }
+.part-info .specs { font-size: 1rem; }
+.part-buy { display: grid; gap: 8px; justify-items: start; }
+.part-buy .btn, .part-info > .btn { min-height: 48px; min-width: 200px; }
+.top nav a.cartbtn { padding: 8px 12px; background: var(--zinc); color: var(--on-zinc); border-radius: 3px; border-bottom: 0; }
+@media (max-width: 760px) {
+  .part-cols { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .part-info { font-size: 1.125rem; }
+  .part-info h1 { font-size: 1.6rem; }
+  .part-buy .btn, .part-info > .btn { width: 100%; }
+}

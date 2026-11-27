@@ -28,5 +28,5 @@ export default async function Home({ searchParams }: { searchParams: Params }) {
   const catalog = await getShopCatalog(ownDealer, poolDealer);
   const filterOn = look ? look.location_filter : catalog.settings.location_filter;
   const shelves = filterOn ? await getShelves(ownDealer, poolDealer) : [];
-  return <Shop {...catalog} look={look} shelfStock={shelves} openCart={params.cart === "open"} />;
+  return <Shop {...catalog} look={look} shelfStock={shelves} openCart={params.cart === "open"} openItem={one(params.item)} />;
 }

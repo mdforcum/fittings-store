@@ -170,6 +170,10 @@ and everything else are reachable only with the secret key.
 
 Checks: `supabase/test-operations.sql` and `supabase/test-dealer-labels.sql` on a scratch database with every change loaded.
 
+## Part pages for search (`/part/<id>`)
+
+Every part has its own page at `/part/<id>`: name, part number, specs, the numbers it replaces, price, stock and an Add to cart button that uses the same cart as the shop. The page's title, description and product data (schema.org, for search engines and AI assistants) are built only from the part's own record: a price or "in stock" is shown only when it is real, quote-only parts carry no price, and supplier numbers stay private. `/sitemap.xml` lists the shop and each part with a price (or sold by quote) for whichever store's address is asked; `/robots.txt` keeps the back office, dealer page, order pages and API out of search. The shop's part window links to the part's page, and `/?item=<id>` opens the shop with that part's window open.
+
 ## Working on it
 
 ```bash

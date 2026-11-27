@@ -28,6 +28,7 @@ import { madeInUSA, type Category } from "@/lib/foundation";
 import MachinePicker from "./MachinePicker";
 import QuoteForm from "./QuoteForm";
 import { useCart, writeCart } from "@/lib/cart";
+import { partPath } from "@/lib/seo";
 import { lookStyle, storeShipping, type ShelfPlace, type StoreLook } from "@/lib/storefront";
 import { HELD_KEY, cartSignature, countdown, heldFromReply, heldStillGood, readHeld, type HeldCheckout } from "@/lib/holds";
 import {
@@ -47,6 +48,8 @@ type Props = {
   settings: Settings;
   ok: boolean;
   openCart: boolean;
+  /** A part to open on arrival (from its own page). */
+  openItem?: string | null;
   categories?: Category[];
   xrefs?: Record<string, ShopXref[]>;
   fits?: Record<string, ShopFit[]>;
@@ -75,7 +78,7 @@ function FitPill({ state, label }: { state: FitState; label: string }) {
   return <span className="pill bad">Not listed for your {label}</span>;
 }
 
-export default function Shop({ products: listed, settings: base, ok, openCart, categories = [], xrefs = {}, fits = {}, charges = {}, kits = {}, spots = {}, look = null, shelfStock = [] }: Props) {
+export default function Shop({ products: listed, settings: base, ok, openCart, openItem = null, categories = [], xrefs = {}, fits = {}, charges = {}, kits = {}, spots = {}, look = null, shelfStock = [] }: Props) {
   // A storefront shows its own name, contact details and, if it sets them, shipping charges.
   const settings: Settings = look
     ? storeShipping({ ...base, store_name: look.name, tagline: look.tagline || base.tagline, phone: look.phone, email: look.email }, look)
@@ -90,7 +93,7 @@ export default function Shop({ products: listed, settings: base, ok, openCart, c
   const [filter, setFilter] = useState("all");
   const [instock, setInstock] = useState(false);
   const [cartOpen, setCartOpen] = useState(openCart);
-  const [detailId, setDetailId] = useState<string | null>(null);
+  const [detailId, setDetailId] = useState<string | null>(openItem);
   const [toast, setToast] = useState<ToastState>(null);
   const [busy, setBusy] = useState(false);
   const [checkoutError, setCheckoutError] = useState<{ text: string; contact: boolean } | null>(null);
@@ -744,6 +747,9 @@ export default function Shop({ products: listed, settings: base, ok, openCart, c
               </div>
             )}
             <h3 style={{ font: "600 1.15rem/1.3 var(--body)" }}>{detail.name}</h3>
+            <p className="hint">
+              <Link href={`${partPath(detail.id)}${look?.preview ? `?storefront=${look.slug}` : ""}`}>This part&apos;s own page</Link> (to share or bookmark)
+            </p>
             <dl className="specs">
               {detail.part_number && (
                 <>
