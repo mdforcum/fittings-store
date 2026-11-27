@@ -3,15 +3,19 @@
 // note on each, let the reader draft the layout file and ask what it could not
 // tell, answer, check the layout, and put it on the shelf map. Built for a
 // phone in the shop. The file format is in lib/spacemap.ts.
+//
+// Used in two places: the back office (every dealer's locations) and the dealer
+// portal (scope "dealer": only the signed-in dealer's own locations). The
+// server decides what each sign-in may see; this screen only shows it.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { prepare } from "@/lib/scan";
-import { normCode } from "@/lib/shelf";
 import { nameAt, outlineRows, parseSpaceMap } from "@/lib/spacemap";
 import { MAX_PHOTOS } from "@/lib/spacemap-read";
 import type { SpaceMapSummary, SpaceMapView } from "@/lib/spacemap-server";
-import type { Say } from "../Admin";
 
-type ListData = { maps: SpaceMapSummary[]; locations: Array<{ id: string; code: string; name: string }>; vision: boolean; shelf_ready: boolean };
+export type Say = (text: string, bad?: boolean) => void;
+export type MapperScope = "admin" | "dealer";
+type ListData = { maps: SpaceMapSummary[]; locations: Array<{ id: string; code: string; name: string; dealer: string; mapped: boolean }>; vision: boolean };
 type Reply = { ok: boolean; message?: string; map?: SpaceMapView; vision?: boolean; problems?: number; spots?: number; adds?: number; changes?: number } & Partial<ListData>;
 type Waiting = { id: string; blob: Blob; thumb: string; note: string };
 
@@ -19,25 +23,30 @@ const EFFORT_WORDS = { near: "a few steps", walk: "a walk", far: "far" } as cons
 const day = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "");
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
-async function call(body?: Record<string, unknown> | FormData, id?: string): Promise<Reply> {
-  try {
-    const r = !body
-      ? await fetch(`/api/spacemap${id ? `?id=${id}` : ""}`, { cache: "no-store" })
-      : body instanceof FormData
-        ? await fetch("/api/spacemap", { method: "POST", body })
-        : await fetch("/api/spacemap", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    return (await r.json()) as Reply;
-  } catch {
-    return { ok: false, message: "No connection. Try again." };
-  }
+/** Talks to the API as the back office or as the signed-in dealer; the server checks the sign-in either way. */
+function caller(scope: MapperScope) {
+  return async (body?: Record<string, unknown> | FormData, id?: string): Promise<Reply> => {
+    try {
+      const r = !body
+        ? await fetch(`/api/spacemap?scope=${scope}${id ? `&id=${id}` : ""}`, { cache: "no-store" })
+        : body instanceof FormData
+          ? await fetch("/api/spacemap", { method: "POST", body })
+          : await fetch("/api/spacemap", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...body, scope }) });
+      return (await r.json()) as Reply;
+    } catch {
+      return { ok: false, message: "No connection. Try again." };
+    }
+  };
 }
 
-export default function SpaceMapper({ say }: { say: Say }) {
+export default function SpaceMapper({ say, scope = "admin" }: { say: Say; scope?: MapperScope }) {
+  const call = useMemo(() => caller(scope), [scope]);
+  const office = scope === "admin";
   const [list, setList] = useState<ListData | null>(null);
   const [error, setError] = useState("");
   const [map, setMap] = useState<SpaceMapView | null>(null);
   const [vision, setVision] = useState(true);
-  const [draft, setDraft] = useState({ name: "", code: "", from: "" });
+  const [pick, setPick] = useState("");
   const [text, setText] = useState("");
   const [notes, setNotes] = useState("");
   const [answers, setAnswers] = useState<Record<string, string>>({});
@@ -57,9 +66,9 @@ export default function SpaceMapper({ say }: { say: Say }) {
     const body = await call();
     if (!body.ok) return setError(body.message ?? "Could not load.");
     setError("");
-    setList({ maps: body.maps ?? [], locations: body.locations ?? [], vision: !!body.vision, shelf_ready: !!body.shelf_ready });
+    setList({ maps: body.maps ?? [], locations: body.locations ?? [], vision: !!body.vision });
     setVision(!!body.vision);
-  }, []);
+  }, [call]);
 
   useEffect(() => {
     const first = setTimeout(() => void loadList(), 0);
@@ -88,12 +97,12 @@ export default function SpaceMapper({ say }: { say: Say }) {
     show(body.map, true);
   }
 
-  async function create() {
+  async function create(locationId: string) {
     setBusy("create");
-    const body = await call({ action: "map.create", name: draft.name, code: draft.code, from_spot: draft.from || null });
+    const body = await call({ action: "map.create", location_id: locationId });
     setBusy("");
     if (!body.ok || !body.map) return say(body.message ?? "That did not save.", true);
-    setDraft({ name: "", code: "", from: "" });
+    setPick("");
     setQueue(() => []);
     show(body.map, true);
   }
@@ -106,7 +115,7 @@ export default function SpaceMapper({ say }: { say: Say }) {
       setBusy((b) => b || "upload");
       for (let w = queue.current[0]; w; w = queue.current[0]) {
         const form = new FormData();
-        form.set("meta", JSON.stringify({ id: mapId, photo_id: w.id, note: w.note }));
+        form.set("meta", JSON.stringify({ id: mapId, photo_id: w.id, note: w.note, scope }));
         form.set("photo", w.blob);
         const body = await call(form);
         if (!body.ok || !body.map) {
@@ -121,7 +130,7 @@ export default function SpaceMapper({ say }: { say: Say }) {
       sending.current = false;
       setBusy((b) => (b === "upload" ? "" : b));
     },
-    [say, setQueue],
+    [say, setQueue, call, scope],
   );
 
   const mapId = map?.id;
@@ -216,26 +225,33 @@ export default function SpaceMapper({ say }: { say: Say }) {
   if (error) return <p className="err">{error}</p>;
   if (!list) return <p className="hint">Loading…</p>;
 
+  const noReading = office ? "Photo reading is not switched on yet (ANTHROPIC_API_KEY in Vercel). You can still write a layout file by hand." : "Photo reading is not switched on yet. Ask Backroad Iron.";
+
   if (!map) {
-    const code = normCode(draft.code);
+    const unmapped = list.locations.filter((l) => !l.mapped);
+    const chosen = unmapped.find((l) => l.id === pick) ?? (unmapped.length === 1 ? unmapped[0] : undefined);
     return (
       <div className="hs">
         <div className="lead">
-          <p className="eyebrow">Space mapper</p>
+          <p className="eyebrow">{office ? "Space mapper" : "Shop layout"}</p>
           <h1>Map a shop from photos</h1>
           <p className="sub">
             Take photos of the aisles, shelves, bin tags, doors and stairs, with a short note on each if you like. The mapper writes the layout, asks
-            about what it could not tell, and puts it on the shelf map so pick tickets take the shortest walk. Nothing is measured.
+            about what it could not tell, and puts it on the shelf map so pick tickets take the shortest walk. Nothing is measured.{" "}
+            {office ? "Each location has its own map, and a dealer's staff see only their own." : "Only your own staff and Backroad Iron can see your shop's map."}
           </p>
         </div>
-        {!list.vision && <p className="hint">Photo reading is not switched on yet (ANTHROPIC_API_KEY in Vercel). You can still write a layout file by hand.</p>}
-        {list.maps.length === 0 && <p className="empty">No maps yet. Start one below.</p>}
+        {!list.vision && <p className="hint">{noReading}</p>}
+        {list.locations.length === 0 && <p className="empty">{office ? "No store locations yet. Add one in Settings first." : "No locations are set up for your login yet. Ask Backroad Iron."}</p>}
         <ul className="hs-list">
           {list.maps.map((m) => (
             <li key={m.id} className="hs-item">
               <div className="hs-head">
-                <strong>{m.name}</strong>
+                <strong>
+                  {m.name} <span className="mono">{m.code}</span>
+                </strong>
                 <span className="hint">
+                  {office && m.dealer ? `${m.dealer} · ` : ""}
                   {plural(m.photos, "photo")} · {plural(m.spots, "spot")}
                   {m.open ? ` · ${plural(m.open, "question")} waiting` : ""}
                   {m.applied_at ? ` · on the shelf map since ${day(m.applied_at)}` : " · not on the shelf map yet"}
@@ -249,42 +265,46 @@ export default function SpaceMapper({ say }: { say: Say }) {
             </li>
           ))}
         </ul>
-        <form
-          className="panel"
-          onSubmit={(e) => {
-            e.preventDefault();
-            void create();
-          }}
-        >
-          <h2>Start a map</h2>
-          <label htmlFor="sm-name">Shop or location name</label>
-          <input id="sm-name" className="field" value={draft.name} maxLength={80} placeholder="e.g. McCormick Diesel" onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
-          {list.locations.length > 0 && (
-            <>
-              <label htmlFor="sm-from">Start from</label>
-              <select id="sm-from" className="field" value={draft.from} onChange={(e) => setDraft({ ...draft, from: e.target.value })}>
-                <option value="">A new location</option>
-                {list.locations.map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {l.code} · {l.name} (already on the shelf map)
-                  </option>
-                ))}
-              </select>
-            </>
-          )}
-          {!draft.from && (
-            <>
-              <label htmlFor="sm-code">Short code for the location (1 to 6 letters or digits)</label>
-              <input id="sm-code" className="field" value={draft.code} maxLength={6} autoCapitalize="characters" placeholder="e.g. MCD" onChange={(e) => setDraft({ ...draft, code: e.target.value })} />
-              <p className="hint">Every shelf code at this location starts with it, like {code ?? "MCD"}-1-07-12.</p>
-            </>
-          )}
-          <div className="inline">
-            <button type="submit" className="btn" disabled={busy === "create" || !draft.name.trim() || (!draft.from && !code)}>
-              Start
-            </button>
-          </div>
-        </form>
+        {unmapped.length > 0 && (
+          <form
+            className="panel"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (chosen) void create(chosen.id);
+            }}
+          >
+            <h2>Start a map</h2>
+            {unmapped.length > 1 && (
+              <>
+                <label htmlFor="sm-loc">Location</label>
+                <select id="sm-loc" className="field" value={pick} onChange={(e) => setPick(e.target.value)}>
+                  <option value="">Pick a location</option>
+                  {unmapped.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {office && l.dealer ? `${l.dealer}: ` : ""}
+                      {l.name}
+                      {l.code ? ` (${l.code})` : " (no short code yet)"}
+                    </option>
+                  ))}
+                </select>
+              </>
+            )}
+            {chosen && (
+              <p className="hint">
+                {chosen.code
+                  ? `${office && chosen.dealer ? `${chosen.dealer}: ` : ""}${chosen.name}. Every shelf code here starts with ${chosen.code}, like ${chosen.code}-1-07-12.`
+                  : office
+                    ? `${chosen.name} has no short code yet. Give it one in Settings first.`
+                    : `${chosen.name} has no short code yet. Ask Backroad Iron to set one.`}
+              </p>
+            )}
+            <div className="inline">
+              <button type="submit" className="btn" disabled={busy === "create" || !chosen?.code}>
+                Start
+              </button>
+            </div>
+          </form>
+        )}
       </div>
     );
   }
@@ -300,7 +320,10 @@ export default function SpaceMapper({ say }: { say: Say }) {
   return (
     <div className="hs">
       <div className="lead">
-        <p className="eyebrow">Space mapper</p>
+        <p className="eyebrow">
+          {office ? "Space mapper" : "Shop layout"}
+          {office && map.location.dealer ? ` · ${map.location.dealer}` : ""}
+        </p>
         <h1>{map.name}</h1>
         <div className="inline">
           <button
@@ -316,6 +339,7 @@ export default function SpaceMapper({ say }: { say: Say }) {
           <span className="hint">
             {plural(parsed.count, "spot")}
             {map.applied_at ? (map.applied_same && !dirty ? ` · on the shelf map since ${day(map.applied_at)}` : " · changed since it went on the shelf map") : " · not on the shelf map yet"}
+            {map.updated_by ? ` · last changed by ${map.updated_by}` : ""}
           </span>
         </div>
       </div>
@@ -415,7 +439,7 @@ export default function SpaceMapper({ say }: { say: Say }) {
             A read takes the newest {MAX_PHOTOS} photos. What the older ones showed is already in the layout.
           </p>
         )}
-        {!vision && <p className="hint">Photo reading is not switched on yet (ANTHROPIC_API_KEY in Vercel). You can write the file by hand below.</p>}
+        {!vision && <p className="hint">{noReading}</p>}
         <div className="inline">
           <button type="button" className="btn" disabled={!vision || !!busy || waiting.length > 0 || (photoCount === 0 && !notes.trim())} onClick={() => void read()}>
             {reading ? "Reading…" : map.reading.at ? (unread ? `Read again with ${plural(unread, "new photo")}` : "Read again") : "Read the layout"}
@@ -588,6 +612,8 @@ export default function SpaceMapper({ say }: { say: Say }) {
           <p className="hint">Fix the lines listed above first.</p>
         ) : dirty ? (
           <p className="hint">Save the file to see what would change.</p>
+        ) : map.blocked ? (
+          <p className="err">{map.blocked}</p>
         ) : map.plan ? (
           <p>
             Putting this on the shelf map adds {plural(map.plan.adds, "spot")}
@@ -596,33 +622,35 @@ export default function SpaceMapper({ say }: { say: Say }) {
             part moves.
           </p>
         ) : (
-          <p className="hint">{parsed.count ? "The shelf map is not set up yet (supabase/add-shelf-spots.sql)." : "Nothing to put on the shelf map yet."}</p>
+          <p className="hint">{parsed.count ? "The shelf map is not set up yet." : "Nothing to put on the shelf map yet."}</p>
         )}
         <div className="inline">
-          <button type="button" className="btn" disabled={!!busy || parsed.problems.length > 0 || !parsed.count || (map.applied_same && !dirty)} onClick={() => void apply()}>
+          <button type="button" className="btn" disabled={!!busy || parsed.problems.length > 0 || !parsed.count || (!dirty && (!!map.blocked || map.applied_same))} onClick={() => void apply()}>
             {busy === "apply" ? "Saving…" : map.applied_at ? "Update the shelf map" : "Put on the shelf map"}
           </button>
           {openQs.length > 0 && <span className="hint">{plural(openQs.length, "question")} still open. You can update the shelf map again later.</span>}
         </div>
       </section>
 
-      <div className="inline">
-        {sure ? (
-          <>
-            <span className="hint">Delete this map and its photos? Spots already on the shelf map stay; pick tickets stop using its start point and links.</span>
-            <button type="button" className="btn danger sm" onClick={() => void remove()}>
-              Yes, delete
+      {office && (
+        <div className="inline">
+          {sure ? (
+            <>
+              <span className="hint">Delete this map and its photos? Spots already on the shelf map stay; pick tickets stop using its start point and links.</span>
+              <button type="button" className="btn danger sm" onClick={() => void remove()}>
+                Yes, delete
+              </button>
+              <button type="button" className="btn ghost sm" onClick={() => setSure(false)}>
+                Keep it
+              </button>
+            </>
+          ) : (
+            <button type="button" className="btn ghost sm" onClick={() => setSure(true)}>
+              Delete this map
             </button>
-            <button type="button" className="btn ghost sm" onClick={() => setSure(false)}>
-              Keep it
-            </button>
-          </>
-        ) : (
-          <button type="button" className="btn ghost sm" onClick={() => setSure(true)}>
-            Delete this map
-          </button>
-        )}
-      </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

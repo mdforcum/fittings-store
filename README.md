@@ -165,8 +165,25 @@ Spots listed one after another are taken to be next to each other; a `link:`
 line says otherwise (`near`, `walk` or `far`). `start:` is where picks begin and
 end. The walk itself is `lib/walk.ts`; the reader's instructions are
 `lib/spacemap-read.ts`. Setup: `supabase/add-space-maps.sql` (after
-`add-shelf-spots.sql`), and `ANTHROPIC_API_KEY` for the photo reading. Without
-the key the file can still be written by hand.
+`add-shelf-spots.sql`), then `supabase/add-space-map-locations.sql`, and
+`ANTHROPIC_API_KEY` for the photo reading. Without the key the file can still
+be written by hand.
+
+**Who sees what.** Every map is the file of one store location, one map per
+location, and every request is made under a sign-in.
+
+- A dealer's staff use it from the dealer portal (**Shop layout**), under
+  their own login. They see and change only their own dealer's locations.
+  Another dealer's map answers "no longer exists", the same as one that was
+  never there.
+- The back office sees every dealer's maps and is the only one that can delete
+  one.
+- A file writes only under its own location's top spot on the shelf map. Its
+  one top line must carry the location's short code, and that top spot is tied
+  to the location in the database, so one dealer's file cannot reach another
+  dealer's shelves.
+- Each map records who started it and who changed it last, and each photo who
+  added it. A map gets 30 photo reads a day.
 
 ## Environment variables
 

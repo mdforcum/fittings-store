@@ -2,11 +2,13 @@
 // The dealer portal: orders with parts on this dealer's shelves, a pick list
 // to print or check off, "mark shipped" with tracking, and the month's
 // statement. Everything a dealer needs without a back-office login.
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { PortalData, PortalOrder, PortalQuote } from "@/app/api/dealer/route";
 import { money } from "@/lib/catalog";
 import DealerStock from "./DealerStock";
 import { KIND_LABEL, monthName, monthOf, totals, type SettlementRow } from "@/lib/settlements";
+import SpaceMapper from "./admin/SpaceMapper";
+import { Toast, type ToastState } from "./ui";
 
 type Reply = { ok: boolean; message?: string; data?: PortalData; result?: Record<string, unknown> };
 
@@ -392,21 +394,35 @@ export default function DealerPortal() {
   const [data, setData] = useState<PortalData | null>(null);
   const [state, setState] = useState<"loading" | "out" | "in" | "error">("loading");
   const [message, setMessage] = useState("");
-  const [view, setView] = useState<"open" | "done" | "stock" | "statement">("open");
+  const [view, setView] = useState<"open" | "done" | "stock" | "statement" | "layout">("open");
   const [bought, setBought] = useState<Bought | null>(null);
+  const [toast, setToast] = useState<ToastState>(null);
+  const say = useCallback((text: string, bad = false) => setToast({ text, bad, at: Date.now() }), []);
+  const clearToast = useCallback(() => setToast(null), []);
 
+  // True once the page has loaded for a signed-in dealer.
+  const up = useRef(false);
   const load = useCallback(async () => {
     try {
       const r = await fetch("/api/dealer", { cache: "no-store" });
       const body = (await r.json()) as Reply;
-      if (r.status === 401) return setState("out");
+      if (r.status === 401) {
+        up.current = false;
+        return setState("out");
+      }
+      // A refresh that fails once the page is up (no signal in the shop) leaves the page as it is,
+      // so photos waiting to send from Shop layout are not thrown away.
       if (!body.ok || !body.data) {
         setMessage(body.message ?? "Your orders could not be loaded.");
-        return setState("error");
+        if (!up.current) setState("error");
+        return;
       }
       setData(body.data);
+      setMessage("");
+      up.current = true;
       setState("in");
     } catch {
+      if (up.current) return;
       setMessage("No connection. Try again.");
       setState("error");
     }
@@ -469,6 +485,7 @@ export default function DealerPortal() {
             ["done", "Done"],
             ["stock", "Stock"],
             ["statement", "Statement"],
+            ["layout", "Shop layout"],
           ] as const
         ).map(([k, label]) => (
           <button key={k} type="button" className="tab" aria-current={view === k ? "page" : undefined} onClick={() => setView(k)}>
@@ -494,7 +511,9 @@ export default function DealerPortal() {
           )}
         </div>
       )}
-      {view === "stock" ? (
+      {view === "layout" ? (
+        <SpaceMapper scope="dealer" say={say} />
+      ) : view === "stock" ? (
         <DealerStock locations={data.locations} supportEmail={data.support_email} call={call} />
       ) : view === "statement" ? (
         <Statement />
@@ -538,6 +557,7 @@ export default function DealerPortal() {
           "Email Backroad Iron."
         )}
       </p>
+      <Toast toast={toast} clear={clearToast} />
     </main>
   );
 }

@@ -55,12 +55,12 @@ test("the request carries the notes, the file so far, the shelf map, the answers
     { id: "q2", question: "How many bins?", why: "", choices: [], answer: "" },
     { id: "q3", question: "Still open?", why: "", choices: [], answer: null },
   ];
-  const text = layoutRequest({ name: "McCormick", notes: "Loft is up the stairs.", markup: "spacemap 1\nLocation MCD\n", shelf: "spacemap 1\n\nLocation MCD\n  Aisle 01\n", asked, problems: [{ line: 4, text: "Indent with two spaces for each level." }], photoCount: 2 });
-  for (const part of ["Shop: McCormick", "There are 2 photos above", "Loft is up the stairs.", "keep their changes", "Parts are already placed in these", "Q: Where do picks start?\nA: Counter", "A: (skipped: do not ask again; use your best reading)", "Line 4: Indent with two spaces"]) {
+  const text = layoutRequest({ name: "McCormick", code: "MCD", notes: "Loft is up the stairs.", markup: "spacemap 1\nLocation MCD\n", shelf: "spacemap 1\n\nLocation MCD\n  Aisle 01\n", asked, problems: [{ line: 4, text: "Indent with two spaces for each level." }], photoCount: 2 });
+  for (const part of ["Shop: McCormick", "one top line, Location MCD", "There are 2 photos above", "Loft is up the stairs.", "keep their changes", "Parts are already placed in these", "Q: Where do picks start?\nA: Counter", "A: (skipped: do not ask again; use your best reading)", "Line 4: Indent with two spaces"]) {
     assert.ok(text.includes(part), part);
   }
   assert.ok(!text.includes("Still open?"));
-  const first = layoutRequest({ name: "McCormick", notes: "", markup: "", shelf: "", asked: [], photoCount: 0 });
+  const first = layoutRequest({ name: "McCormick", code: "MCD", notes: "", markup: "", shelf: "", asked: [], photoCount: 0 });
   assert.ok(first.includes("There are no photos yet") && first.includes("There is no layout file yet."));
   assert.equal(photoCaption(3, '  aisle 3\nfrom the "counter" end '), 'Photo 3. The person\'s note: "aisle 3 from the "counter" end"');
   assert.equal(photoCaption(1, " "), "Photo 1. No note.");

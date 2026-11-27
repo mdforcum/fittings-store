@@ -487,3 +487,57 @@ export function walkPlan(maps: SpaceMap[], spots: Spot[]): WalkPlan & { lost: nu
   }
   return plan;
 }
+
+// --- One file per location ----------------------------------------------------
+// A layout file belongs to one store location. On the shelf map it may read
+// and write only that location's own top spot and what is inside it, so one
+// dealer's file can never touch another dealer's shelves.
+
+/** A shelf-map spot with the store location it is the top spot of (top spots only). */
+export type BoundSpot = Spot & { location_id: string | null };
+
+export type Scope =
+  | { ok: true; spots: BoundSpot[]; rootId: string | null; /** The top spot exists with no location yet, and gets this one. */ adopt: boolean }
+  | { ok: false; message: string };
+
+/** What is wrong with a file as the file of the location with this code, or null. */
+export function fileProblem(map: SpaceMap, code: string): string | null {
+  if (!code) return "This location has no short code yet. It needs one before it can be mapped.";
+  if (map.roots.length !== 1 || map.roots[0].code !== code) {
+    return `This file maps one location, so it has one top line, with this location's code: Location ${code}.`;
+  }
+  return null;
+}
+
+/**
+ * The part of the shelf map the file of one location may use: the top spot
+ * tied to the location and everything inside it. A top spot with the same code
+ * and no location yet may be taken over only when `mayAdopt` (the back office).
+ */
+export function locationScope(spots: BoundSpot[], location: { id: string; code: string }, mayAdopt: boolean): Scope {
+  const inside = (rootId: string): BoundSpot[] => {
+    const kids = new Map<string, BoundSpot[]>();
+    for (const s of spots) if (s.parent_id) (kids.get(s.parent_id) ?? kids.set(s.parent_id, []).get(s.parent_id)!).push(s);
+    const out: BoundSpot[] = [];
+    const todo = spots.filter((s) => s.id === rootId);
+    for (let guard = 0; todo.length && guard < 100_000; guard++) {
+      const s = todo.pop()!;
+      out.push(s);
+      todo.push(...(kids.get(s.id) ?? []));
+    }
+    return out;
+  };
+  const bound = spots.find((s) => !s.parent_id && s.location_id === location.id);
+  if (bound) {
+    if (bound.code !== location.code) {
+      return { ok: false, message: `This location's shelf map uses the code ${bound.code}, but the location's code is now ${location.code || "blank"}. Set them the same first.` };
+    }
+    return { ok: true, spots: inside(bound.id), rootId: bound.id, adopt: false };
+  }
+  const sameCode = spots.find((s) => !s.parent_id && s.code === location.code);
+  if (!sameCode) return { ok: true, spots: [], rootId: null, adopt: false };
+  if (sameCode.location_id || !mayAdopt) {
+    return { ok: false, message: `The code ${location.code} is already in use on the shelf map. This location needs a different short code before it can go on.` };
+  }
+  return { ok: true, spots: inside(sameCode.id), rootId: sameCode.id, adopt: true };
+}

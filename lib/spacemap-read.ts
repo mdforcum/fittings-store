@@ -164,7 +164,7 @@ RULES
 - Keep every code that is already on the shelf map or in the layout file so far, unless the person says it is wrong. Add to what is there; do not rename it.
 - Put in only what a photo, note or answer supports. If you can see an aisle has bins but not how many, put in the aisle, leave the bins out and ask.
 - Never fill in a count or a code you cannot see or were not told. Never pad the file to look complete.
-- One Location at the top, with the name and short code you were given.
+- Exactly one Location line at the top, with the name and location code you were given. Never add a second Location and never change its code.
 - Send the whole file every time, including the parts that did not change.
 
 QUESTIONS
@@ -179,6 +179,8 @@ QUESTIONS
 
 export type ReadContext = {
   name: string;
+  /** The location's short code: the code on the file's one top line. */
+  code: string;
   /** What the person wrote about the shop as a whole. */
   notes: string;
   /** The layout file so far ("" on the first read). */
@@ -194,7 +196,7 @@ export type ReadContext = {
 /** The words that go with the photos. */
 export function layoutRequest(c: ReadContext): string {
   const parts: string[] = [];
-  parts.push(`Shop: ${c.name}`);
+  parts.push(`Shop: ${c.name}\nIts location code: ${c.code}. The file has one top line, Location ${c.code}, and everything else sits inside it.`);
   parts.push(c.photoCount ? `There ${c.photoCount === 1 ? "is 1 photo" : `are ${c.photoCount} photos`} above, numbered in the order taken.` : "There are no photos yet. Work from the notes and answers.");
   if (c.notes.trim()) parts.push(`What the person wrote about the shop:\n${c.notes.trim()}`);
   parts.push(c.markup.trim() ? `The layout file so far (the person may have edited it by hand; keep their changes):\n${c.markup.trim()}` : "There is no layout file yet.");

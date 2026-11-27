@@ -239,3 +239,46 @@ link: MCD-03 <> MCD-UP near
   assert.deepEqual(plan.links, [{ a: "a2", b: "up", effort: "far", via: "Stairs" }]);
   assert.equal(plan.lost, 1, "aisle 03 is not on the shelf map, so its link is skipped");
 });
+
+test("a location's file reaches only its own top spot on the shelf map", async () => {
+  const { fileProblem, locationScope } = await import("../lib/spacemap.ts");
+  const b = (id: string, parent_id: string | null, code: string, location_id: string | null = null) => ({ ...s(id, parent_id, parent_id ? "Aisle" : "Location", code), location_id });
+  const spots = [
+    b("A", null, "MCD", "locA"),
+    b("A1", "A", "01"),
+    b("A1b", "A1", "07"),
+    b("B", null, "EFF", "locB"),
+    b("B1", "B", "01"),
+    b("loose", null, "OLD"),
+    b("loose1", "loose", "01"),
+  ];
+  const mine = locationScope(spots, { id: "locA", code: "MCD" }, false);
+  assert.ok(mine.ok);
+  assert.deepEqual(mine.spots.map((x) => x.id).sort(), ["A", "A1", "A1b"]);
+  assert.deepEqual([mine.rootId, mine.adopt], ["A", false]);
+
+  // A location with nothing on the shelf map yet starts clean.
+  assert.deepEqual(locationScope(spots, { id: "locC", code: "NEW" }, false), { ok: true, spots: [], rootId: null, adopt: false });
+
+  // Another location's code is never written into, whoever asks.
+  for (const mayAdopt of [false, true]) {
+    const taken = locationScope(spots, { id: "locC", code: "EFF" }, mayAdopt);
+    assert.ok(!taken.ok && /already in use/.test(taken.message));
+  }
+  // A top spot nobody owns yet: only the back office may tie it to a location.
+  const dealer = locationScope(spots, { id: "locC", code: "OLD" }, false);
+  assert.ok(!dealer.ok);
+  const office = locationScope(spots, { id: "locC", code: "OLD" }, true);
+  assert.ok(office.ok && office.adopt && office.rootId === "loose" && office.spots.length === 2);
+  // The location's code changed after it was mapped.
+  const moved = locationScope(spots, { id: "locA", code: "MCD2" }, true);
+  assert.ok(!moved.ok && /uses the code MCD/.test(moved.message));
+
+  // The file itself: one top line, with the location's code.
+  const file = (text: string) => parseSpaceMap(`spacemap 1\n${text}`).map;
+  assert.equal(fileProblem(file("Location MCD\n  Aisle 01\n"), "MCD"), null);
+  assert.match(fileProblem(file("Location EFF\n  Aisle 01\n"), "MCD")!, /Location MCD/);
+  assert.match(fileProblem(file("Location MCD\nLocation EFF\n"), "MCD")!, /one top line/);
+  assert.match(fileProblem(file(""), "MCD")!, /one top line/);
+  assert.match(fileProblem(file("Location MCD\n"), "")!, /no short code/);
+});
