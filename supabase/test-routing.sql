@@ -22,8 +22,8 @@ create or replace function pg_temp.pay(uuid, text, text, int) returns boolean la
     'subtotal_cents', (select sum(unit_price_cents * qty) from shop.fittings_order_items where order_id = $1), 'card_fee_cents', $4));
 $$;
 
-select pg_temp.check((select not route_orders and route_cut_bps = 1000 and storefront_fee_bps = 0 and house_dealer_id = pg_temp.dealer('backroad-iron')
-  from shop.fittings_settings where id = 1), 'routing starts off, with a 10% cut and Backroad Iron as the house');
+select pg_temp.check((select not route_orders and route_cut_bps = 600 and storefront_fee_bps = 0 and house_dealer_id = pg_temp.dealer('backroad-iron')
+  from shop.fittings_settings where id = 1), 'routing starts off, with a 6% selling share and Backroad Iron as the house');
 
 -- Main shop in Shelbyville; McCormick's shop in Sullivan.
 update shop.fittings_locations set zip = '62565', state = 'IL', city = 'Shelbyville' where code = 'MAIN';
@@ -48,8 +48,8 @@ select pg_temp.check(pg_temp.from_('00000000-0000-4000-8000-0000000000f2') = 'MA
 
 -- The ledger.
 select pg_temp.check((select kind || ' parts ' || parts_cents || ' ship ' || shipping_cents || ' cut ' || cut_cents || ' fee ' || card_fee_cents || ' net ' || net_cents
-  from shop.fittings_settlements where order_id = '00000000-0000-4000-8000-0000000000f1') = 'routed parts 1000 ship 1200 cut 100 fee 59 net 2041',
-  'the dealer''s line: parts, all the shipping, 10% cut, the card fee, and what they''re owed');
+  from shop.fittings_settlements where order_id = '00000000-0000-4000-8000-0000000000f1') = 'routed parts 1000 ship 1200 cut 60 fee 59 net 2081',
+  'the dealer''s line: parts, all the shipping, Backroad Iron''s 6%, the card fee, and what they''re owed');
 select pg_temp.check(not exists (select 1 from shop.fittings_settlements where order_id = '00000000-0000-4000-8000-0000000000f2'),
   'nothing is owed when Backroad Iron ships its own');
 

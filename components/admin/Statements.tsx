@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import type { AdminData } from "@/lib/admin-types";
 import { money } from "@/lib/catalog";
-import { bpsToPercent, monthName, monthOf, statementCsv, totals, type SettlementRow } from "@/lib/settlements";
+import { KIND_LABEL, bpsToPercent, monthName, monthOf, statementCsv, totals, type SettlementRow } from "@/lib/settlements";
 import type { Act, Say } from "../Admin";
 
 type Props = { data: AdminData; act: Act; say: Say };
@@ -147,9 +147,19 @@ export default function Statements({ data, act, say }: Props) {
               <dd>{money(t.shipping)}</dd>
             </div>
             <div>
-              <dt>Backroad Iron&apos;s cut</dt>
+              <dt>Selling shares earned</dt>
+              <dd>+{money(t.earned)}</dd>
+            </div>
+            <div>
+              <dt>Selling shares paid</dt>
               <dd>−{money(t.cut)}</dd>
             </div>
+            {t.network > 0 && (
+              <div>
+                <dt>Network fees</dt>
+                <dd>−{money(t.network)}</dd>
+              </div>
+            )}
             <div>
               <dt>Card fees</dt>
               <dd>−{money(t.fee)}</dd>
@@ -181,10 +191,11 @@ export default function Statements({ data, act, say }: Props) {
                 <tr>
                   <th scope="col">Date</th>
                   <th scope="col">Order</th>
-                  <th scope="col">From</th>
+                  <th scope="col">Sale</th>
                   <th scope="col" className="num">Parts</th>
                   <th scope="col" className="num">Shipping</th>
-                  <th scope="col" className="num">Cut</th>
+                  <th scope="col" className="num">Share earned</th>
+                  <th scope="col" className="num">Share paid</th>
                   <th scope="col" className="num">Card fee</th>
                   <th scope="col" className="num">Owed</th>
                   <th scope="col">Paid</th>
@@ -195,15 +206,23 @@ export default function Statements({ data, act, say }: Props) {
                   <tr key={r.order_id}>
                     <td data-label="Date">{new Date(r.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/Chicago" })}</td>
                     <td data-label="Order">{r.order_number != null ? `#${r.order_number}` : "—"}</td>
-                    <td data-label="From">{r.kind === "routed" ? "Backroad Iron order" : "Own store"}</td>
+                    <td data-label="Sale">{KIND_LABEL[r.kind]}</td>
                     <td className="num" data-label="Parts">{money(r.parts_cents)}</td>
                     <td className="num" data-label="Shipping">{money(r.shipping_cents)}</td>
-                    <td className="num" data-label="Cut">
-                      <span>
-                        −{money(r.cut_cents)} <span className="hint">({bpsToPercent(r.cut_bps)}%)</span>
-                      </span>
+                    <td className="num" data-label="Share earned">{r.referral_cents ? `+${money(r.referral_cents)}` : "—"}</td>
+                    <td className="num" data-label="Share paid">
+                      {r.cut_cents || r.network_cents ? (
+                        <span>
+                          −{money(r.cut_cents + r.network_cents)}{" "}
+                          <span className="hint">
+                            ({bpsToPercent(r.cut_bps)}%{r.network_cents ? ` + ${bpsToPercent(r.network_bps)}% network` : ""})
+                          </span>
+                        </span>
+                      ) : (
+                        "—"
+                      )}
                     </td>
-                    <td className="num" data-label="Card fee">{r.card_fee_cents == null ? "waiting" : `−${money(r.card_fee_cents)}`}</td>
+                    <td className="num" data-label="Card fee">{r.card_fee_cents == null ? "waiting" : r.card_fee_cents === 0 ? "—" : `−${money(r.card_fee_cents)}`}</td>
                     <td className="num" data-label="Owed">
                       <b>{r.net_cents == null ? "—" : money(r.net_cents)}</b>
                     </td>
@@ -236,7 +255,8 @@ export default function Statements({ data, act, say }: Props) {
         </>
       )}
       <p className="hint st-foot">
-        One line for each paid order where {dealerName} shipped parts. Lines are kept as written; payments are added, never edited.
+        One line for each paid order where {dealerName} made the sale or shipped parts. Lines are kept as written; payments are added, never
+        edited.
       </p>
     </div>
   );

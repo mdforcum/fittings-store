@@ -445,6 +445,7 @@ function RoutingBlock({ data, act, say }: Props) {
   const [f, setF] = useState({
     route_orders: r.route_orders,
     cut: bpsToPercent(r.route_cut_bps),
+    network: bpsToPercent(r.network_fee_bps),
     fee: bpsToPercent(r.storefront_fee_bps),
     house: r.house_dealer_id ?? data.places.dealers[0]?.id ?? "",
   });
@@ -454,11 +455,19 @@ function RoutingBlock({ data, act, say }: Props) {
   async function save(e: React.FormEvent) {
     e.preventDefault();
     const cut = percentToBps(f.cut);
+    const network = percentToBps(f.network);
     const fee = percentToBps(f.fee);
-    if (Number.isNaN(cut)) return say("Backroad Iron's cut is a percent from 0 to 50, like 10.", true);
+    if (Number.isNaN(cut)) return say("The selling share is a percent from 0 to 50, like 6.", true);
+    if (Number.isNaN(network)) return say("The network fee is a percent from 0 to 50, like 2.", true);
     if (Number.isNaN(fee)) return say("The own-store fee is a percent from 0 to 50. Use 0 for none.", true);
     setBusy(true);
-    const done = await act("routing.save", { route_orders: f.route_orders, route_cut_bps: cut, storefront_fee_bps: fee, house_dealer_id: f.house });
+    const done = await act("routing.save", {
+      route_orders: f.route_orders,
+      route_cut_bps: cut,
+      network_fee_bps: network,
+      storefront_fee_bps: fee,
+      house_dealer_id: f.house,
+    });
     setBusy(false);
     if (done) say(f.route_orders ? "Routing saved. Backroad Iron orders now go to dealers who take them." : "Routing saved. It's off.");
   }
@@ -467,9 +476,12 @@ function RoutingBlock({ data, act, say }: Props) {
     <form className="form loc-form route-form" onSubmit={save} aria-label="Routing Backroad Iron orders">
       <h3>Backroad Iron orders filled by dealers</h3>
       <p className="hint">
-        When a Backroad Iron customer orders a part a dealer has, the dealer nearest them (same ZIP area, then same state) can ship it.
-        Backroad Iron keeps its cut and the dealer&apos;s share of the card fee; the dealer gets the rest and the shipping. Only locations
-        set to &quot;Takes Backroad Iron orders&quot; are used. Counter pickups stay at Backroad Iron.
+        When a Backroad Iron customer orders a part a dealer has, the dealer nearest them (same ZIP area, then same state) can ship it. Only
+        locations set to &quot;Takes Backroad Iron orders&quot; are used. Counter pickups stay at Backroad Iron.
+      </p>
+      <p className="hint">
+        Whoever makes the sale earns the selling share; whoever ships gets the rest, the shipping, and pays its share of the card fee. When
+        one dealer&apos;s store sells and another dealer ships, Backroad Iron also keeps the network fee.
       </p>
       <label className="check-row" htmlFor="rt-on">
         <input id="rt-on" type="checkbox" checked={f.route_orders} onChange={(e) => setF({ ...f, route_orders: e.target.checked })} />
@@ -482,8 +494,12 @@ function RoutingBlock({ data, act, say }: Props) {
       </p>
       <div className="three">
         <label htmlFor="rt-cut">
-          Backroad Iron&apos;s cut %
+          Selling share %, both ways
           <input id="rt-cut" inputMode="decimal" autoComplete="off" value={f.cut} onChange={(e) => setF({ ...f, cut: e.target.value })} />
+        </label>
+        <label htmlFor="rt-net">
+          Network fee % (dealer to dealer)
+          <input id="rt-net" inputMode="decimal" autoComplete="off" value={f.network} onChange={(e) => setF({ ...f, network: e.target.value })} />
         </label>
         <label htmlFor="rt-fee">
           Fee on a dealer&apos;s own-store sales %
