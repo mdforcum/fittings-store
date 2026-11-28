@@ -97,6 +97,9 @@ export default function Spots({ products, say }: { products: Product[]; say: Say
         <button type="button" className="btn" onClick={() => setDraft({ id: null, parent_id: null, level: LEVELS[0], code: "", label: "", sort: 0 })}>
           Add a location
         </button>
+        <a className="btn ghost" href="/admin/labels" target="_blank" rel="noopener">
+          Print bin labels
+        </a>
       </div>
 
       {draft && (

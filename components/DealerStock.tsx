@@ -121,7 +121,12 @@ export default function DealerStock({ locations, supportEmail, call, onHeld }: {
 
   return (
     <section className="ds">
-      <h2>Your stock</h2>
+      <div className="home-row">
+        <h2>Your stock</h2>
+        <a className="btn ghost" href="/dealer/labels" target="_blank" rel="noopener">
+          Print bin labels
+        </a>
+      </div>
       <p className="hint">
         Keep these counts right and the web store sells only what you have. Prices and new parts are set by Backroad Iron
         {supportEmail ? (

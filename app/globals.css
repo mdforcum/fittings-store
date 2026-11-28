@@ -798,3 +798,36 @@ label.btn:focus-within { outline: 2px solid var(--focus); outline-offset: 2px; }
 .dh-rules select, .dh-rules input { min-height: 48px; }
 .dh-rules p { margin: 0; }
 @media print { .po-check, .po-checked, .po-who { display: none; } }
+
+/* bin labels: a control panel on screen, sheets of labels on paper */
+.bl-controls { padding: 18px 0; display: grid; gap: 10px; }
+.bl-controls h1, .bl-controls p { margin: 0; }
+.bl-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; align-items: end; }
+.bl-form label { display: grid; gap: 4px; font-weight: 600; }
+.bl-form select, .bl-form input:not([type="checkbox"]) { min-height: 48px; width: 100%; min-width: 0; box-sizing: border-box; }
+.bl-check { display: flex !important; align-items: center; gap: 8px; min-height: 48px; grid-column: 1 / -1; cursor: pointer; }
+.bl-check input { width: 22px; height: 22px; flex: none; }
+.bl-controls .btn { min-height: 48px; display: inline-flex; align-items: center; }
+.bl-page { display: grid; justify-content: start; background: #fff; color: #000; margin: 0 0 18px; padding: 12px; border: 1px solid var(--rule); overflow-x: auto; }
+.bl-label { box-sizing: border-box; overflow: hidden; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 2px; padding: .06in .12in; text-align: center; outline: 1px dashed #b7c2c9; outline-offset: -1px; background: #fff; color: #000; }
+.bl-blank { outline-style: dotted; background: repeating-linear-gradient(135deg, #fff 0 8px, #eef1f3 8px 9px); }
+.bl-code { font: 700 .2in/1 var(--mono); letter-spacing: .01em; white-space: nowrap; overflow: hidden; text-overflow: clip; }
+.bl-bars { display: block; min-height: 0; }
+.bl-bars svg { display: block; width: 100%; height: 100%; }
+.bl-line { font: 400 .095in/1.1 var(--body); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bl-shipping .bl-code { font-size: .36in; }
+.bl-shipping .bl-line { font-size: .14in; }
+.bl-shipping .bl-label { padding: .12in .2in; gap: 6px; }
+.bl-plain .bl-code { font-size: .26in; }
+.bl-plain .bl-line { font-size: .11in; }
+.bl-plain .bl-label { outline: 1px dashed #000; }
+@media print {
+  html, body { background: #fff !important; }
+  .bl-controls { display: none; }
+  .bl.wrap { max-width: none; padding: 0; margin: 0; }
+  .bl-page { border: 0; padding: 0; margin: 0; overflow: visible; break-after: page; }
+  .bl-page:last-child { break-after: auto; }
+  .bl-label { outline: 0; break-inside: avoid; }
+  .bl-plain .bl-label { outline: 1px dashed #000; }
+  .bl-blank { background: none; }
+}
