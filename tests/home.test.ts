@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { alertsWaiting, dealerNeeds, networkOrders, orderNeeds, salesSummary, stockNeeds, waited } from "../lib/home.ts";
+import { alertsWaiting, dealerNeeds, networkOrders, orderNeeds, pulledByDealers, salesSummary, stockNeeds, waited } from "../lib/home.ts";
 
 test("paid orders sort into to pull, to ship and ready for pickup", () => {
   const orders = [
@@ -114,4 +114,21 @@ test("a dealer's quick look: open orders, the longest wait, and what shipped thi
   ];
   assert.equal(dealerNeeds(marked, now).pulled, 2, "the shipped stop's parts don't hold the order back");
   assert.equal(dealerNeeds(marked, now).open, 3);
+});
+
+test("an order a dealer has fully checked off counts as pulled in the back office", () => {
+  const al = [
+    { order_id: "o1", location_id: "mcd", product_id: "kit", qty: 2 },
+    { order_id: "o2", location_id: "mcd", product_id: "kit", qty: 2 },
+    { order_id: "o3", location_id: "mcd", product_id: "kit", qty: 1 },
+    { order_id: "o3", location_id: "main", product_id: "tee", qty: 1 },
+    { order_id: "o4", location_id: "mcd", product_id: "kit", qty: 1 },
+  ];
+  const marks = [
+    { order_id: "o1", location_id: "mcd", product_id: "kit", picked_qty: 2 },
+    { order_id: "o2", location_id: "mcd", product_id: "kit", picked_qty: 1 },
+    { order_id: "o3", location_id: "mcd", product_id: "kit", picked_qty: 1 },
+  ];
+  assert.deepEqual([...pulledByDealers(al, marks)], ["o1"], "part-pulled, split across locations, and untouched orders are not pulled");
+  assert.deepEqual([...pulledByDealers([], marks)], []);
 });

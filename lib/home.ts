@@ -45,6 +45,24 @@ export function orderNeeds(orders: HomeOrder[], progress: PickProgress): OrderNe
   return out;
 }
 
+/**
+ * Orders a dealer has fully pulled on the dealer page count as pulled here
+ * too: every part taken for the order, at every location, is checked off.
+ * Returns the ids of those orders.
+ */
+export function pulledByDealers(
+  allocations: Array<{ order_id: string; location_id: string; product_id: string; qty: number }>,
+  marks: Array<{ order_id: string; location_id: string; product_id: string; picked_qty: number }>,
+): Set<string> {
+  const got = new Map(marks.map((m) => [`${m.order_id}:${m.location_id}:${m.product_id}`, m.picked_qty]));
+  const state = new Map<string, boolean>();
+  for (const a of allocations) {
+    const ok = (got.get(`${a.order_id}:${a.location_id}:${a.product_id}`) ?? 0) >= a.qty;
+    state.set(a.order_id, (state.get(a.order_id) ?? true) && ok);
+  }
+  return new Set([...state].filter(([, ok]) => ok).map(([id]) => id));
+}
+
 export type NetworkOrders = {
   /** Backroad Iron store orders with parts coming off a dealer's shelf, by dealer. */
   out: Array<{ dealer_id: string; name: string; orders: number }>;

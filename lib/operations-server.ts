@@ -13,7 +13,8 @@ import { getStripe } from "./payments";
 import { onhandMap } from "./places";
 import { readRole } from "./roles";
 import { expandParts, type PickKitItem, type PickMark, type PickOrderItem, type PickProduct } from "./picking";
-import type { PickProgress, SaleRow } from "./home";
+import { pulledByDealers, type PickProgress, type SaleRow } from "./home";
+import { readRules } from "./roles";
 import { emailReady, queueLowStock, sendQueued, textReady } from "./notify";
 
 export class ActionError extends Error {}
@@ -111,6 +112,18 @@ async function loadHome(db: SupabaseClient): Promise<Record<string, unknown>> {
       const row = (progress[part.order_id] ??= { need: 0, picked: 0 });
       row.need += part.qty;
       row.picked += part.picked_qty;
+    }
+    // A dealer checks parts off on the dealer page (supabase/add-pull-marks.sql): an order pulled there is pulled.
+    const [al, pm] = await Promise.all([
+      db.from("fittings_allocations").select("order_id, location_id, product_id, qty").in("order_id", ids).limit(20000),
+      db.from("fittings_pull_marks").select("order_id, location_id, product_id, picked_qty").in("order_id", ids).limit(20000),
+    ]);
+    if (!al.error && !pm.error) {
+      for (const id of pulledByDealers((al.data ?? []) as Parameters<typeof pulledByDealers>[0], (pm.data ?? []) as Parameters<typeof pulledByDealers>[1])) {
+        const row = (progress[id] ??= { need: 1, picked: 0 });
+        row.picked = Math.max(row.need, 1);
+        row.need = Math.max(row.need, 1);
+      }
     }
   }
 
@@ -381,6 +394,31 @@ export async function runOps(action: string, a: Payload, db: SupabaseClient): Pr
       if (r.error && /role/.test(r.error.message)) r = await save(false);
       if (r.error) fail(r.error.message);
       return { saved: email, reset: !!cur.data };
+    }
+
+    // A dealer's own rules and its activity record, for the back office to look at.
+    case "dealer.activity": {
+      if (!isId(a.dealer_id)) fail("Pick a dealer.");
+      const [d, ev] = await Promise.all([
+        db.from("fittings_dealers").select("*").eq("id", a.dealer_id as string).maybeSingle(),
+        db.from("fittings_dealer_events").select("*").eq("dealer_id", a.dealer_id as string).order("id", { ascending: false }).limit(60),
+      ]);
+      if (missing(ev.error)) fail("Run supabase/add-dealer-roles.sql in the Supabase SQL Editor first.");
+      const rows = (ev.data ?? []) as Array<Record<string, unknown>>;
+      const orderIds = [...new Set(rows.map((e) => e.order_id).filter((v): v is string => typeof v === "string"))];
+      const nums = new Map<string, number>();
+      if (orderIds.length) for (const o of (await db.from("fittings_orders").select("id, number").in("id", orderIds)).data ?? []) nums.set(o.id as string, o.number as number);
+      return {
+        rules: readRules(d.error ? null : (d.data as Record<string, unknown> | null), true),
+        events: rows.map((e) => ({
+          id: Number(e.id),
+          action: String(e.action),
+          user_name: String(e.user_name ?? ""),
+          order_number: typeof e.order_id === "string" ? (nums.get(e.order_id) ?? null) : null,
+          detail: (e.detail as Record<string, unknown>) ?? {},
+          created_at: String(e.created_at ?? ""),
+        })),
+      };
     }
 
     case "dealer_user.role": {

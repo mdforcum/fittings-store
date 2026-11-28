@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { AdminData } from "@/lib/admin-types";
 import { normCode, type Dealer, type StoreLocation } from "@/lib/places";
+import { MODE_LABEL, eventText, type DealerRules } from "@/lib/roles";
 import { bpsToPercent, percentToBps } from "@/lib/settlements";
 import { dollarsToCents, type Storefront } from "@/lib/storefront";
 
@@ -425,6 +426,13 @@ function DealerLogins({ dealer, act, say }: { dealer: Dealer; act: Act; say: Say
     // The first login at a dealer should be a manager: someone has to approve counts and set the shop rules.
     if (!list.some((u) => u.role === "manager" && !u.disabled)) setF((x) => ({ ...x, role: "manager" }));
   }
+  // The dealer's own rules and who did what, read-only here: the dealer's manager sets the rules.
+  const [seen, setSeen] = useState<{ rules: DealerRules; events: Array<{ id: number; action: string; user_name: string; order_number: number | null; detail: Record<string, unknown>; created_at: string }> } | null>(null);
+  async function showActivity() {
+    if (seen) return setSeen(null);
+    const r = await act("dealer.activity", { dealer_id: dealer.id });
+    if (r) setSeen({ rules: r.rules as DealerRules, events: (r.events as NonNullable<typeof seen>["events"]) ?? [] });
+  }
   async function setRole(u: DealerLogin, role: string) {
     const r = await act("dealer_user.role", { user_id: u.id, role });
     if (r) say(`${u.name || u.email} is now a ${role}`);
@@ -488,6 +496,33 @@ function DealerLogins({ dealer, act, say }: { dealer: Dealer; act: Act; say: Say
               </li>
             ))}
           </ul>
+          {roles && (
+            <div className="loc-activity">
+              <button type="button" className="btn ghost sm" aria-expanded={!!seen} onClick={showActivity}>
+                {seen ? "Hide rules and activity" : "Show rules and activity"}
+              </button>
+              {seen && (
+                <>
+                  <p>
+                    Before an order ships: <b>{MODE_LABEL[seen.rules.ship_check]}</b>. A worker&apos;s count waits for a manager when it changes the number
+                    by more than <b>{seen.rules.count_hold_over}</b>. {dealer.name}&apos;s manager sets these on the dealer page.
+                  </p>
+                  {seen.events.length ? (
+                    <ul className="loc-list">
+                      {seen.events.map((e) => (
+                        <li key={e.id} className="inline">
+                          <span>{eventText(e)}</span>
+                          <span className="hint">{new Date(e.created_at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="hint">Nothing yet. Packing, checking, shipping, receiving and counting show here with each person&apos;s name.</p>
+                  )}
+                </>
+              )}
+            </div>
+          )}
           <form className="form" onSubmit={save} aria-label={`Add a login for ${dealer.name}`}>
             <div className="three">
               <label htmlFor={`ue-${dealer.id}`}>
