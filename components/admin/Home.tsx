@@ -5,13 +5,13 @@ import { useCallback, useEffect, useState } from "react";
 import type { AdminData } from "@/lib/admin-types";
 import { DEFAULT_SHORTCUTS, NAV_GROUPS, SHORTCUTS_KEY, SHORTCUT_LIMIT, TAB_NAMES, readShortcuts, toggleShortcut, type Tab } from "@/lib/admin-nav";
 import { money } from "@/lib/catalog";
-import { networkOrders, orderNeeds, salesSummary, stockNeeds, waited, type PickProgress, type SaleRow, type SalesSpan } from "@/lib/home";
+import { alertsWaiting, networkOrders, orderNeeds, salesSummary, stockNeeds, waited, type PickProgress, type SaleRow, type SalesSpan } from "@/lib/home";
 import type { LowLine } from "@/lib/operations";
 import { NO_PLACES } from "@/lib/places";
 import type { Act } from "../Admin";
 
 type Props = { data: AdminData; act: Act; go: (t: Tab) => void; reload: () => Promise<void> };
-type Extra = { progress: PickProgress; low: LowLine[]; sales: SaleRow[]; capped: boolean; at: number };
+type Extra = { progress: PickProgress; low: LowLine[]; sales: SaleRow[]; capped: boolean; hoses: number; alerts: { queued: number; failed: number }; at: number };
 type Tone = "todo" | "bad" | "clear";
 
 export default function Home({ data, act, go, reload }: Props) {
@@ -23,7 +23,16 @@ export default function Home({ data, act, go, reload }: Props) {
 
   const load = useCallback(async () => {
     const r = await act("home.load");
-    if (r) setExtra({ progress: (r.progress as PickProgress) ?? {}, low: (r.low as LowLine[]) ?? [], sales: (r.sales as SaleRow[]) ?? [], capped: r.capped === true, at: Date.now() });
+    if (r)
+      setExtra({
+        progress: (r.progress as PickProgress) ?? {},
+        low: (r.low as LowLine[]) ?? [],
+        sales: (r.sales as SaleRow[]) ?? [],
+        capped: r.capped === true,
+        hoses: Number(r.hoses ?? 0),
+        alerts: (r.alerts as Extra["alerts"]) ?? { queued: 0, failed: 0 },
+        at: Date.now(),
+      });
   }, [act]);
 
   useEffect(() => {
@@ -65,6 +74,8 @@ export default function Home({ data, act, go, reload }: Props) {
   const locName = (id: string) => places.locations.find((l) => l.id === id)?.name ?? "";
   const longest = needs.oldestPaid && now ? waited(needs.oldestPaid, now) : "";
   const open = needs.toPull + needs.toShip + needs.toPickUp;
+  const hoses = extra?.hoses ?? 0;
+  const unsent = alertsWaiting(extra?.alerts ?? { queued: 0, failed: 0 }, !!data.ops?.email || !!data.ops?.text);
 
   const tiles: Array<{ key: string; n: number; label: string; detail: string; to: Tab; tone: Tone }> = [
     { key: "pull", n: needs.toPull, label: needs.toPull === 1 ? "Order to pull" : "Orders to pull", detail: needs.toPull && longest ? `Longest wait: ${longest}` : "Paid, parts still on the shelf", to: "orders", tone: needs.toPull ? "todo" : "clear" },
@@ -74,6 +85,8 @@ export default function Home({ data, act, go, reload }: Props) {
     { key: "low", n: stock.low, label: "Running low", detail: opsReady ? "At or under the low-stock number, or under a month left" : "Switches on with the operations database change", to: "alerts", tone: stock.low ? "todo" : "clear" },
     { key: "out", n: stock.out, label: "Out of stock", detail: "Hidden from shoppers until restocked", to: "inventory", tone: stock.out ? "bad" : "clear" },
     { key: "quotes", n: quotes, label: quotes === 1 ? "Quote to answer" : "Quotes to answer", detail: "New requests nobody has answered", to: "quotes", tone: quotes ? "todo" : "clear" },
+    ...(hoses ? [{ key: "hoses", n: hoses, label: hoses === 1 ? "Hose request to look at" : "Hose requests to look at", detail: "New requests nobody has opened", to: "hoses" as Tab, tone: "todo" as Tone }] : []),
+    ...(unsent.n ? [{ key: "alerts", n: unsent.n, label: unsent.n === 1 ? "Dealer alert not sent" : "Dealer alerts not sent", detail: unsent.detail, to: "alerts" as Tab, tone: (unsent.failed ? "bad" : "todo") as Tone }] : []),
     ...(stock.noPrice ? [{ key: "price", n: stock.noPrice, label: stock.noPrice === 1 ? "Part needs a price" : "Parts need a price", detail: "In stock but can't be sold yet", to: "inventory" as Tab, tone: "todo" as Tone }] : []),
   ];
 

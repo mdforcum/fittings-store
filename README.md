@@ -30,12 +30,14 @@ Shippo.
 
 The back office opens on **Home**: a quick look at what needs doing, and the shortcuts each person picked.
 
-- **Needs you now.** Orders to pull (paid, parts still on the shelf), orders to ship (every part checked off on the pick ticket), ready for pickup, orders that came up short, running low, out of stock, quotes to answer and parts with no price. Each tile opens its page.
+- **Needs you now.** Orders to pull (paid, parts still on the shelf), orders to ship (every part checked off on the pick ticket), ready for pickup, orders that came up short, running low, out of stock, quotes to answer, new hose requests, dealer alerts that haven't gone out (red when one failed) and parts with no price. Each tile opens its page.
 - **Sales.** Today, the last 7 days and the last 30: web orders by parts value before shipping and tax, and counter sales as rung up.
 - **Orders shared with dealers.** Open Backroad Iron orders with parts on a dealer's shelf (going out), and open dealer store orders with parts on Backroad Iron's shelf (coming in), by dealer.
 - **My shortcuts.** Up to eight pages, picked with Change shortcuts. They are kept in the browser, so each device has its own until the back office has named logins.
 
-The rules are in `lib/home.ts`; the extra numbers come from the `home.load` action. The header has Home and five groups, and the row under it shows the pages of the group that is open:
+Home updates when it is opened, reloaded, or Refresh is pressed; it does not refresh on a timer. The dealer page (`/dealer`) opens on its own Home: that dealer's orders to pull and ship, what it shipped in the last 7 days, and what is running low or out on its own shelves. The dealer's view is kept in the address (`/dealer#open`), so a reload stays put.
+
+The rules are in `lib/home.ts`; the extra numbers come from the `home.load` action (back office) and the `home` action (dealer page). The header has Home and five groups, and the row under it shows the pages of the group that is open:
 
 - **Sell**: Orders, Counter sale, Quotes, Hoses. A number on Sell is how many paid orders are waiting to ship.
 - **Stock**: Inventory, Running low, Shelf map, Space mapper, Survey.

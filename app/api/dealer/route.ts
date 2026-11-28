@@ -209,6 +209,36 @@ async function loadStock(db: SupabaseClient, s: DealerSession): Promise<PortalSt
   return { products, onhand, low };
 }
 
+/** Running low at this dealer's locations, without loading the whole catalog: only the parts on its shelves or sold there. */
+async function loadLow(db: SupabaseClient, s: DealerSession): Promise<LowLine[]> {
+  const locs = await myLocations(db, s);
+  const mine = locs.map((l) => l.id);
+  if (!mine.length) return [];
+  const since = new Date(Date.now() - 30 * 86400_000).toISOString();
+  const [oh, mv, st] = await Promise.all([
+    db.from("fittings_onhand").select("product_id, location_id, qty").in("location_id", mine).limit(50000),
+    db.from("fittings_stock_moves").select("product_id, location_id, delta").eq("kind", "sale").in("location_id", mine).gte("created_at", since).limit(50000),
+    db.from("fittings_settings").select("low_stock").eq("id", 1).maybeSingle(),
+  ]);
+  if (oh.error) return [];
+  const onhand = onhandMap(oh.data as Array<{ product_id: unknown; location_id: unknown; qty: unknown }>);
+  const sold: Record<string, Record<string, number>> = {};
+  for (const m of mv.error ? [] : (mv.data ?? [])) {
+    if (!m.location_id) continue;
+    const row = (sold[m.product_id as string] ??= {});
+    row[m.location_id as string] = (row[m.location_id as string] ?? 0) - (m.delta as number);
+  }
+  const ids = [...new Set([...Object.keys(onhand), ...Object.keys(sold)])];
+  const products: Array<{ id: string; name: string; part_number: string }> = [];
+  for (let i = 0; i < ids.length; i += 300) {
+    const p = await db.from("fittings_products").select("id, name, part_number").in("id", ids.slice(i, i + 300));
+    for (const r of (p.error ? [] : (p.data ?? [])) as Array<Record<string, unknown>>) {
+      products.push({ id: String(r.id), name: typeof r.name === "string" ? r.name : "", part_number: typeof r.part_number === "string" ? r.part_number : "" });
+    }
+  }
+  return runningLow(products, onhand, sold, locs, Number((st.data as { low_stock?: number } | null)?.low_stock ?? 2));
+}
+
 async function run(action: string, a: Payload, db: SupabaseClient, s: DealerSession): Promise<Response | null> {
   // Part finder: the dealer's own bins and sales, and no supplier numbers.
   if (action === "lookup.index") {
@@ -221,6 +251,9 @@ async function run(action: string, a: Payload, db: SupabaseClient, s: DealerSess
 
   // The dealer's own shelves -------------------------------------------------------------
   if (action === "stock.load") return json({ ok: true, result: { stock: await loadStock(db, s) } });
+
+  // Home's quick look: what's running low on this dealer's own shelves.
+  if (action === "home") return json({ ok: true, result: { low: await loadLow(db, s) } });
 
   if (action === "stock.count" || action === "stock.sold") {
     if (!isId(a.location_id)) return bad("Pick the location.");

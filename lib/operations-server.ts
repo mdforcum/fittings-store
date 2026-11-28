@@ -73,12 +73,15 @@ export async function loadRunningLow(db: SupabaseClient): Promise<LowLine[]> {
 async function loadHome(db: SupabaseClient): Promise<Record<string, unknown>> {
   const since = new Date(Date.now() - 30 * 86400_000).toISOString();
   const CAP = 5000;
-  const [open, web, counter, low] = await Promise.all([
+  const [open, web, counter, low, hoses, waiting] = await Promise.all([
     db.from("fittings_orders").select("id, number").eq("status", "paid").limit(500),
     db.from("fittings_orders").select("*").in("status", ["paid", "shipped"]).gte("paid_at", since).limit(CAP),
     db.from("fittings_counter_sales").select("total_cents, created_at").gte("created_at", since).limit(CAP),
     loadRunningLow(db).catch(() => [] as LowLine[]),
+    db.from("fittings_hose_requests").select("id", { count: "exact" }).eq("status", "new").limit(1),
+    db.from("fittings_alerts").select("status").in("status", ["queued", "failed"]).limit(2000),
   ]);
+  const alertRows = (waiting.error ? [] : (waiting.data ?? [])) as Array<{ status: string }>;
 
   // Pull progress, by the same rules as the pick ticket (a kit with no bin of its own is pulled as its parts).
   const progress: PickProgress = {};
@@ -118,7 +121,14 @@ async function loadHome(db: SupabaseClient): Promise<Record<string, unknown>> {
   for (const c of (counter.error ? [] : (counter.data ?? [])) as Array<Record<string, unknown>>) {
     if (typeof c.created_at === "string") sales.push({ at: c.created_at, cents: Number(c.total_cents ?? 0), kind: "counter" });
   }
-  return { progress, low, sales, capped: (web.data?.length ?? 0) >= CAP || (counter.data?.length ?? 0) >= CAP };
+  return {
+    progress,
+    low,
+    sales,
+    capped: (web.data?.length ?? 0) >= CAP || (counter.data?.length ?? 0) >= CAP,
+    hoses: hoses.error ? 0 : (hoses.count ?? 0),
+    alerts: { queued: alertRows.filter((r) => r.status === "queued").length, failed: alertRows.filter((r) => r.status === "failed").length },
+  };
 }
 
 /** Runs an operations action; undefined when the action isn't one of these. */

@@ -145,3 +145,45 @@ export function waited(fromIso: string | null, now: number): string {
   if (mins < 48 * 60) return say(Math.floor(mins / 60), "hour");
   return say(Math.floor(mins / 1440), "day");
 }
+
+/**
+ * Dealer alerts (order and running-low messages) that haven't gone out. With no
+ * email or text service set up they wait in the outbox; a failed one needs a retry.
+ */
+export function alertsWaiting(a: { queued: number; failed: number }, canSend: boolean): { n: number; failed: boolean; detail: string } {
+  const queued = Math.max(0, a.queued || 0);
+  const failed = Math.max(0, a.failed || 0);
+  const detail = failed
+    ? `${failed} failed. Open the outbox to try again`
+    : canSend
+      ? "Waiting in the outbox. Open it to send"
+      : "No email or text service is set up yet";
+  return { n: queued + failed, failed: failed > 0, detail };
+}
+
+type DealerOrder = { status: string; created_at: string; lines: Array<{ location_id: string }>; shipped: Array<{ location_id: string; shipped_at: string }> };
+
+export type DealerNeeds = {
+  /** Orders with parts on this dealer's shelf that haven't shipped from there. */
+  open: number;
+  /** When the longest-waiting open order came in. */
+  oldest: string | null;
+  /** Orders this dealer finished in the last 7 days. */
+  shipped7: number;
+};
+
+/** A dealer's own quick look: what is waiting on their shelf, and what went out this week. */
+export function dealerNeeds(orders: DealerOrder[], now: number): DealerNeeds {
+  const out: DealerNeeds = { open: 0, oldest: null, shipped7: 0 };
+  const week = now - 7 * 86400_000;
+  for (const o of orders) {
+    const isOpen = o.lines.some((l) => !o.shipped.some((s) => s.location_id === l.location_id));
+    if (isOpen) {
+      out.open++;
+      if (!out.oldest || o.created_at < out.oldest) out.oldest = o.created_at;
+    } else if (o.shipped.length && Math.max(...o.shipped.map((s) => Date.parse(s.shipped_at) || 0)) >= week) {
+      out.shipped7++;
+    }
+  }
+  return out;
+}

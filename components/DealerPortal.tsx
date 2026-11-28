@@ -5,12 +5,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PortalData, PortalOrder, PortalQuote } from "@/app/api/dealer/route";
 import { money } from "@/lib/catalog";
+import DealerHome from "./DealerHome";
 import DealerStock from "./DealerStock";
 import { KIND_LABEL, monthName, monthOf, totals, type SettlementRow } from "@/lib/settlements";
 import SpaceMapper from "./admin/SpaceMapper";
 import { Toast, type ToastState } from "./ui";
 
 type Reply = { ok: boolean; message?: string; data?: PortalData; result?: Record<string, unknown> };
+
+const DEALER_VIEWS = ["home", "open", "done", "stock", "statement", "layout"] as const;
+type DealerView = (typeof DEALER_VIEWS)[number];
 
 async function call(body: Record<string, unknown>): Promise<Reply> {
   try {
@@ -394,7 +398,24 @@ export default function DealerPortal() {
   const [data, setData] = useState<PortalData | null>(null);
   const [state, setState] = useState<"loading" | "out" | "in" | "error">("loading");
   const [message, setMessage] = useState("");
-  const [view, setView] = useState<"open" | "done" | "stock" | "statement" | "layout">("open");
+  const [view, setViewState] = useState<DealerView>("home");
+  // The address's "#view" keeps the view through a reload and makes Back work.
+  const setView = useCallback((v: DealerView) => {
+    setViewState(v);
+    if (window.location.hash.replace("#", "") !== v) window.location.hash = v;
+  }, []);
+  useEffect(() => {
+    const read = () => {
+      const h = window.location.hash.replace("#", "");
+      setViewState((DEALER_VIEWS as readonly string[]).includes(h) ? (h as DealerView) : "home");
+    };
+    const first = setTimeout(read, 0);
+    window.addEventListener("hashchange", read);
+    return () => {
+      clearTimeout(first);
+      window.removeEventListener("hashchange", read);
+    };
+  }, []);
   const [bought, setBought] = useState<Bought | null>(null);
   const [toast, setToast] = useState<ToastState>(null);
   const say = useCallback((text: string, bad = false) => setToast({ text, bad, at: Date.now() }), []);
@@ -463,7 +484,16 @@ export default function DealerPortal() {
           <h1>{data.dealer.name}</h1>
         </div>
         <div className="po-top-actions">
-          <button type="button" className="btn ghost" onClick={() => window.print()}>
+          <button
+            type="button"
+            className="btn ghost"
+            onClick={() => {
+              // The pick list is the To pull view: show it first, then print.
+              if (view === "open") return window.print();
+              setView("open");
+              setTimeout(() => window.print(), 150);
+            }}
+          >
             Print pick list
           </button>
           <button
@@ -481,6 +511,7 @@ export default function DealerPortal() {
       <nav className="po-tabs" aria-label="Views">
         {(
           [
+            ["home", "Home"],
             ["open", `To pull (${open.length})`],
             ["done", "Done"],
             ["stock", "Stock"],
@@ -511,7 +542,9 @@ export default function DealerPortal() {
           )}
         </div>
       )}
-      {view === "layout" ? (
+      {view === "home" ? (
+        <DealerHome data={data} call={call} go={setView} reload={load} />
+      ) : view === "layout" ? (
         <SpaceMapper scope="dealer" say={say} />
       ) : view === "stock" ? (
         <DealerStock locations={data.locations} supportEmail={data.support_email} call={call} />

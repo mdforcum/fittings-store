@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { networkOrders, orderNeeds, salesSummary, stockNeeds, waited } from "../lib/home.ts";
+import { alertsWaiting, dealerNeeds, networkOrders, orderNeeds, salesSummary, stockNeeds, waited } from "../lib/home.ts";
 
 test("paid orders sort into to pull, to ship and ready for pickup", () => {
   const orders = [
@@ -85,4 +85,25 @@ test("how long an order has waited, in plain words", () => {
   assert.equal(waited("2026-11-24T12:00:00Z", now), "3 days");
   assert.equal(waited(null, now), "");
   assert.equal(waited("2026-11-28T12:00:00Z", now), "");
+});
+
+test("dealer alerts that haven't gone out: waiting, failed, and why", () => {
+  assert.deepEqual(alertsWaiting({ queued: 0, failed: 0 }, false), { n: 0, failed: false, detail: "No email or text service is set up yet" });
+  assert.deepEqual(alertsWaiting({ queued: 3, failed: 0 }, false), { n: 3, failed: false, detail: "No email or text service is set up yet" });
+  assert.deepEqual(alertsWaiting({ queued: 3, failed: 0 }, true), { n: 3, failed: false, detail: "Waiting in the outbox. Open it to send" });
+  assert.deepEqual(alertsWaiting({ queued: 1, failed: 2 }, true), { n: 3, failed: true, detail: "2 failed. Open the outbox to try again" });
+});
+
+test("a dealer's quick look: open orders, the longest wait, and what shipped this week", () => {
+  const now = Date.parse("2026-11-27T12:00:00Z");
+  const line = (location_id: string) => ({ location_id });
+  const sent = (location_id: string, shipped_at: string) => ({ location_id, shipped_at });
+  const orders = [
+    { status: "paid", created_at: "2026-11-26T09:00:00Z", lines: [line("a")], shipped: [] }, // open
+    { status: "paid", created_at: "2026-11-25T09:00:00Z", lines: [line("a"), line("b")], shipped: [sent("a", "2026-11-26T10:00:00Z")] }, // one stop still open
+    { status: "shipped", created_at: "2026-11-24T09:00:00Z", lines: [line("a")], shipped: [sent("a", "2026-11-25T10:00:00Z")] }, // done this week
+    { status: "shipped", created_at: "2026-11-01T09:00:00Z", lines: [line("a")], shipped: [sent("a", "2026-11-02T10:00:00Z")] }, // done long ago
+  ];
+  assert.deepEqual(dealerNeeds(orders, now), { open: 2, oldest: "2026-11-25T09:00:00Z", shipped7: 1 });
+  assert.deepEqual(dealerNeeds([], now), { open: 0, oldest: null, shipped7: 0 });
 });
