@@ -41,6 +41,8 @@ test("search as you type: numbers anywhere, all words, a typing slip forgiven, o
   assert.deepEqual(ids("jic", (id) => (id === "tee" ? 4 : 0)), ["tee", "cap", "elbow"], "what's on this shelf comes first");
   assert.deepEqual(ids("elbow jic"), ["elbow"], "every word must match, in any order");
   assert.deepEqual(ids("injecter"), ["kit"]);
+  assert.deepEqual(ids("jics"), ["cap", "elbow", "tee"], "a plural finds the same parts");
+  assert.deepEqual(ids("injectorseal"), ["kit"], "two words run together still match");
   assert.equal(smartSearch("injecter", parts, index)[0].because, "Close spelling");
   assert.deepEqual(ids("pump"), []);
   assert.deepEqual(ids("  "), []);

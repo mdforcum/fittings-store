@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { addToGarage, fitState, readGarage, removeFromGarage, searchProducts, shopNav, underCategory, warrantyText, type ShopXref } from "../lib/browse.ts";
+import { addToGarage, fitState, readGarage, removeFromGarage, searchProducts, shelfWords, shopNav, underCategory, warrantyText, type ShopXref } from "../lib/browse.ts";
 import type { Product } from "../lib/catalog.ts";
 import type { Category } from "../lib/foundation.ts";
 
@@ -58,6 +58,59 @@ test("search: our number, then numbers an item replaces, then words", () => {
   );
   assert.deepEqual(searchProducts(items, xrefs, "hose"), []);
   assert.equal(searchProducts(items, xrefs, " ").length, 2);
+});
+
+test("search forgives how people type: no hyphen, plurals, shorthand, misspellings", () => {
+  const items = [
+    p("orb", { name: "O-Ring Boss Plug -08", type: "orb-plug", part_number: "6408-08", thread: "3/4-16", sort: 1 }),
+    p("kit", { name: "O-ring kit, 382 pieces", part_number: "ORK-382", sort: 2 }),
+    p("cap", { name: "37° JIC Cap 1/2 FJ", type: "jic-cap", part_number: "830-FS-08", thread: "3/4-16", sort: 3 }),
+    p("cap14", { name: "37° JIC Cap 9/16", type: "jic-cap", part_number: "830-FS-06", thread: "9/16-18", sort: 4 }),
+    p("hose", { name: "Hydraulic hose 3/8 x 10 ft", part_number: "HH-38-10", description: "Two-wire hose with JIC swivel ends.", category_id: "hoses", sort: 5 }),
+  ];
+  const none = new Map<string, ShopXref[]>();
+  const find = (q: string, shelves?: Map<string, string>) => searchProducts(items, none, q, shelves);
+  const ids = (q: string, shelves?: Map<string, string>) => find(q, shelves).map((h) => h.product.id);
+
+  assert.deepEqual(ids("o-ring"), ["orb", "kit"]);
+  assert.deepEqual(ids("oring"), ["orb", "kit"], "no hyphen finds the same parts");
+  assert.deepEqual(ids("o ring"), ["orb", "kit"]);
+  assert.deepEqual(ids("O-Rings"), ["orb", "kit"]);
+  assert.deepEqual(ids("orings kit"), ["kit"]);
+  assert.deepEqual(ids("orb"), ["orb"], "ORB means O-ring boss");
+  assert.deepEqual(ids("caps"), ["cap", "cap14"], "a plural");
+  assert.deepEqual(ids("jic caps 3/4-16"), ["cap"]);
+  assert.ok(find("o-ring").every((h) => !h.loose), "a match in another form is not marked as a guess");
+  assert.ok(find("o-ring")[0].score > find("oring")[0].score, "as written ranks above another form");
+
+  const slip = find("hydrolic hose");
+  assert.deepEqual(slip.map((h) => [h.product.id, h.loose]), [["hose", "spelling"]], "a misspelling still finds it, marked as a guess");
+  assert.deepEqual(ids("hidraulic"), ["hose"]);
+  assert.deepEqual(ids("swivel"), ["hose"], "words in the description count");
+
+  // A guess is offered only when nothing matches for certain.
+  const seats = [p("seal", { name: "Seal kit" }), p("seat", { name: "Valve seat" })];
+  assert.deepEqual(searchProducts(seats, none, "seal").map((h) => h.product.id), ["seal"], "a sure match keeps the near-miss out");
+  assert.deepEqual(searchProducts(seats, none, "seel").map((h) => [h.product.id, h.loose]), [["seal", "spelling"]]);
+
+  // Sizes are never guessed at.
+  assert.deepEqual(ids("3/4-14"), []);
+  assert.deepEqual(ids("830-FS-07"), []);
+  assert.deepEqual(ids("cap 9/16-18"), ["cap14"]);
+
+  // Nothing matches every word: offer what matches at least half, marked as a looser match.
+  const some = find("jic cap 7/8-14 stainless");
+  assert.deepEqual(some.map((h) => [h.product.id, h.loose]), [["cap", "some"], ["cap14", "some"]]);
+  assert.deepEqual(ids("stainless pump"), [], "no words match, so nothing is offered");
+  assert.deepEqual(ids("pump"), []);
+
+  // A shelf's name, and the departments above it, can be searched.
+  const shelves = shelfWords([cat("hyd", null), cat("hoses", "hyd"), cat("hidden", null, false)].map((c, i) => ({ ...c, name: ["Hydraulics", "Hoses and couplers", "Secret"][i] })));
+  assert.equal(shelves.get("hoses"), "Hoses and couplers Hydraulics");
+  assert.equal(shelves.get("hidden"), "");
+  assert.deepEqual(ids("couplers", shelves), ["hose"]);
+  assert.deepEqual(ids("coupler", shelves), ["hose"]);
+  assert.deepEqual(ids("couplers"), []);
 });
 
 test("fit: say nothing without a machine list, ask for the serial where it matters", () => {

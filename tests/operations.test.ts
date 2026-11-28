@@ -283,3 +283,15 @@ test("a UPC column finds parts by barcode and marks new barcodes to link", () =>
   // Dealers get counts only: a matched barcode row goes through, and nothing is linked for them.
   assert.deepEqual(dealerCountLines(lines).apply, [{ product_id: "tee", qty: 4 }]);
 });
+
+test("the dealer page's reload time comes from config, 15 minutes unless set", async () => {
+  const { DEALER_REFRESH_MINUTES, readDealerRefresh } = await import("../lib/operations.ts");
+  assert.equal(DEALER_REFRESH_MINUTES, 15);
+  assert.equal(readDealerRefresh(null), 15);
+  assert.equal(readDealerRefresh({ minutes: 5 }), 5);
+  assert.equal(readDealerRefresh({ minutes: 0 }), 0, "0 turns it off");
+  assert.equal(readDealerRefresh(30), 30);
+  assert.equal(readDealerRefresh({ minutes: 0.5 }), 15);
+  assert.equal(readDealerRefresh({ minutes: 9999 }), 15);
+  assert.equal(readDealerRefresh({ minutes: "5" }), 15);
+});

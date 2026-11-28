@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PortalData, PortalOrder, PortalQuote } from "@/app/api/dealer/route";
 import { money } from "@/lib/catalog";
+import { DEALER_REFRESH_MINUTES } from "@/lib/operations";
 import DealerHome from "./DealerHome";
 import DealerStock from "./DealerStock";
 import { KIND_LABEL, monthName, monthOf, totals, type SettlementRow } from "@/lib/settlements";
@@ -451,14 +452,20 @@ export default function DealerPortal() {
 
   useEffect(() => {
     const t = setTimeout(() => void load(), 0);
+    return () => clearTimeout(t);
+  }, [load]);
+
+  // The page reloads on its own only now and then (the minutes come from config), and only while it
+  // is on screen. Refresh checks right away.
+  const minutes = data?.refresh_minutes ?? DEALER_REFRESH_MINUTES;
+  useEffect(() => {
+    if (!(minutes > 0)) return;
     const every = setInterval(() => {
       if (document.visibilityState === "visible") void load();
-    }, 60_000);
-    return () => {
-      clearTimeout(t);
-      clearInterval(every);
-    };
-  }, [load]);
+    }, minutes * 60_000);
+    return () => clearInterval(every);
+  }, [load, minutes]);
+  const [checking, setChecking] = useState(false);
 
   if (state === "loading") return <main className="center portal"><p>Loading your orders…</p></main>;
   if (state === "out") return <SignIn onIn={() => void load()} />;
@@ -484,6 +491,19 @@ export default function DealerPortal() {
           <h1>{data.dealer.name}</h1>
         </div>
         <div className="po-top-actions">
+          <button
+            type="button"
+            className="btn ghost"
+            disabled={checking}
+            onClick={async () => {
+              setChecking(true);
+              await load();
+              setChecking(false);
+              say("Checked for new orders.");
+            }}
+          >
+            {checking ? "Checking…" : "Check for new orders"}
+          </button>
           <button
             type="button"
             className="btn ghost"

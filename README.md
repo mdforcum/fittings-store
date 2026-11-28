@@ -35,7 +35,7 @@ The back office opens on **Home**: a quick look at what needs doing, and the sho
 - **Orders shared with dealers.** Open Backroad Iron orders with parts on a dealer's shelf (going out), and open dealer store orders with parts on Backroad Iron's shelf (coming in), by dealer.
 - **My shortcuts.** Up to eight pages, picked with Change shortcuts. They are kept in the browser, so each device has its own until the back office has named logins.
 
-Home updates when it is opened, reloaded, or Refresh is pressed; it does not refresh on a timer. The dealer page (`/dealer`) opens on its own Home: that dealer's orders to pull and ship, what it shipped in the last 7 days, and what is running low or out on its own shelves. The dealer's view is kept in the address (`/dealer#open`), so a reload stays put.
+Home updates when it is opened, reloaded, or Refresh is pressed; it does not refresh on a timer. The dealer page reloads its orders on its own every 15 minutes while it is on screen, and right away when Check for new orders is pressed. To change the 15 minutes, set the private config row `dealer_refresh` to `{"minutes": N}` (0 turns it off, 240 is the most). The dealer page (`/dealer`) opens on its own Home: that dealer's orders to pull and ship, what it shipped in the last 7 days, and what is running low or out on its own shelves. The dealer's view is kept in the address (`/dealer#open`), so a reload stays put.
 
 The rules are in `lib/home.ts`; the extra numbers come from the `home.load` action (back office) and the `home` action (dealer page). The header has Home and five groups, and the row under it shows the pages of the group that is open:
 
@@ -262,6 +262,19 @@ and everything else are reachable only with the secret key.
 - **Real mileage** (`supabase/add-zip-miles.sql`). When an order is routed to a location, "nearest" means the shortest straight-line distance in miles between the shopper's ZIP code and each location's ZIP code. Load the ZIP code table once under Dealers, Dealers and locations, Real mileage (Load ZIP codes). The points come from the open-source `zipcodes` npm package (version 8, BSD licence; its README says the United States list came from federalgovernmentzipcodes.us), kept in `fittings_zip_points`. If a ZIP code is not in the table, or the table is empty, routing falls back to the old rule: same first three ZIP digits, then same state. Nothing changes until the ZIP codes are loaded.
 
 Checks: `supabase/test-operations.sql`, `supabase/test-dealer-labels.sql`, `supabase/test-label-voids.sql` and `supabase/test-zip-miles.sql` on a scratch database with every change loaded.
+
+## The search box
+
+The shop's search box looks for a number first (our part number, then any number a part replaces, with punctuation and spaces ignored), then for words. Words are forgiven how they are typed:
+
+- **Hyphens and spaces.** "oring", "o ring" and "o-ring" are one word, whichever way the catalog spells it.
+- **Plurals.** "plugs" finds "plug".
+- **Shop shorthand.** "orb" finds "O-ring boss" and the other way round; "orfs" and "O-ring face seal" likewise. "jic" also brings up "flare", "npt" brings up "pipe" and "zerk" brings up "grease fitting" (one way only: not every pipe thread is NPT).
+- **More places to match.** The part's type, its shelf and the departments above it, and its description.
+- **Misspellings.** One typing slip in a word of four letters or more, two in a word of eight or more ("hydrolic"). These are offered only when nothing matches for certain, with a line that says they are the closest parts.
+- **Some of the words.** If no part matches every word, parts that match at least half are offered, with a line that says so.
+
+A size, thread or number is never guessed at: a word with a digit in it has to match exactly, so 3/4-16 never brings up 3/4-14. The rules are in `lib/words.ts` (shared with the part finder in the back office and on the dealer page) and `lib/browse.ts`.
 
 ## Part pages for search (`/part/<id>`)
 

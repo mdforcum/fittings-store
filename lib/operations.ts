@@ -119,6 +119,17 @@ export function counterWarnings(lines: CounterLine[], onShelf: Record<string, nu
 
 export const IMPORT_LIMIT = 2000;
 
+/** The private config key for how often the dealer page reloads on its own. */
+export const DEALER_REFRESH_KEY = "dealer_refresh";
+/** Minutes between the dealer page's own reloads while it is on screen, unless config says otherwise. */
+export const DEALER_REFRESH_MINUTES = 15;
+
+/** Reads `{ minutes }` from config: a whole number from 0 (off) to 240. Anything else is the default. */
+export function readDealerRefresh(value: unknown): number {
+  const m = value && typeof value === "object" ? (value as { minutes?: unknown }).minutes : value;
+  return typeof m === "number" && Number.isInteger(m) && m >= 0 && m <= 240 ? m : DEALER_REFRESH_MINUTES;
+}
+
 /** One ZIP code's center point, as the routing table stores it. */
 export type ZipPoint = { zip: string; lat: number; lng: number };
 

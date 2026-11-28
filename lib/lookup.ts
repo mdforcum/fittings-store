@@ -4,6 +4,8 @@
 // the other parts in its bin and the parts sold with it before. No database
 // or network here, so the rules can be tested.
 
+import { prepareWords, termTier, type Words } from "./words.ts";
+
 export type LookupPart = { id: string; name: string; part_number: string };
 /** Another number a part answers to: a UPC, an OEM number, a number it replaces. */
 export type LookupCode = { norm: string; product_id: string; label: string };
@@ -56,6 +58,16 @@ export function nearWord(a: string, b: string): boolean {
 
 export type Found = { id: string; score: number; because: string };
 
+const preparedParts = new WeakMap<LookupPart, { key: string; w: Words }>();
+function wordsFor(p: LookupPart): Words {
+  const key = `${p.name} ${p.part_number}`;
+  const had = preparedParts.get(p);
+  if (had && had.key === key) return had.w;
+  const w = prepareWords(key);
+  preparedParts.set(p, { key, w });
+  return w;
+}
+
 const wordsOf = (s: string) => s.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
 
 /**
@@ -87,10 +99,12 @@ export function smartSearch(query: string, parts: LookupPart[], index: LookupInd
       }
     }
     if (terms.length) {
-      const hay = wordsOf(`${p.name} ${p.part_number}`);
-      const whole = terms.every((t) => hay.some((h) => h.includes(t)));
-      const close = !whole && terms.every((t) => hay.some((h) => h.includes(t) || (t.length >= 4 && nearWord(t, h))));
-      const s = whole ? (hay.some((h) => h.startsWith(terms[0])) ? 35 : 30) : close ? 15 : 0;
+      // The same forgiving word match as the shop's search box: "oring" finds "O-ring", "plugs" finds "plug".
+      const w = wordsFor(p);
+      const worst = Math.min(...terms.map((t) => termTier(w, t)));
+      const whole = worst >= 2;
+      const close = worst === 1;
+      const s = whole ? ([...w.tokens].some((h) => h.startsWith(terms[0])) || w.joins.has(terms[0]) ? 35 : 30) : close ? 15 : 0;
       if (s > score) [score, because] = [s, close ? "Close spelling" : ""];
     }
     if (score) out.push({ id: p.id, score, because });

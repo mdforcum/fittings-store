@@ -4,7 +4,7 @@ import { sameOrigin } from "@/lib/auth";
 import { currentDealer, dealerSignIn, dealerSignOut, type DealerSession } from "@/lib/dealer-session";
 import type { ShipFrom } from "@/lib/admin-types";
 import { LABELS_KEY, QUOTE_MINUTES, labelCharge, packageGuess, parcelFrom, quoteKey, readLabels, readQuote, signQuote, type PartShipping } from "@/lib/labels";
-import { IMPORT_LIMIT, locationShipFrom, runningLow, type LowLine } from "@/lib/operations";
+import { DEALER_REFRESH_KEY, IMPORT_LIMIT, locationShipFrom, readDealerRefresh, runningLow, type LowLine } from "@/lib/operations";
 import { buildIndex, readPartPhoto } from "@/lib/lookup-server";
 import { onhandMap } from "@/lib/places";
 import { normalizeLocation } from "@/lib/places";
@@ -56,13 +56,16 @@ export type PortalData = {
   labels: boolean;
   locations: Array<{ id: string; name: string; code: string }>;
   orders: PortalOrder[];
+  /** Minutes between the page's own reloads while it is on screen; 0 is off. */
+  refresh_minutes: number;
 };
 
 async function load(db: SupabaseClient, s: DealerSession): Promise<PortalData> {
-  const [lo, st, lab] = await Promise.all([
+  const [lo, st, lab, every] = await Promise.all([
     db.from("fittings_locations").select("id, name, code").eq("dealer_id", s.dealer.id).eq("kind", "store").order("sort"),
     db.from("fittings_settings").select("email").eq("id", 1).maybeSingle(),
     getConfig<unknown>(db, LABELS_KEY),
+    getConfig<unknown>(db, DEALER_REFRESH_KEY),
   ]);
   const locations = (lo.data ?? []) as PortalData["locations"];
   const mine = locations.map((l) => l.id);
@@ -73,6 +76,7 @@ async function load(db: SupabaseClient, s: DealerSession): Promise<PortalData> {
     labels: readLabels(lab).on && !!env.shippo && !!env.secret,
     locations,
     orders: [] as PortalOrder[],
+    refresh_minutes: readDealerRefresh(every),
   };
   if (!mine.length) return base;
   const al = await db.from("fittings_allocations").select("order_id, product_id, location_id, qty").in("location_id", mine).limit(5000);

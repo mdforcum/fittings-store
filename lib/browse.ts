@@ -4,7 +4,8 @@
 //   by number    our part number, or any number an item replaces ("86-572263")
 //   by category  departments down to the shelf an item sits on
 //   by machine   the customer's machine, and its serial where a part changed partway
-import type { Product } from "./catalog.ts";
+import { typeOf, type Product } from "./catalog.ts";
+import { prepareWords, squash, termTier, type Words } from "./words.ts";
 import { CONDITIONS, fitsSerial, numberNorm, type Category, type FitRow } from "./foundation.ts";
 
 /** A number an item goes by, as the shop needs it. */
@@ -21,24 +22,59 @@ export type Hit = {
   score: number;
   /** Shown under the item when the search matched a number other than our own: "Replaces 86572263". */
   because: string;
+  /** Set when the match is a best guess: "spelling" a word was a typing slip away; "some" only some of the words matched. */
+  loose?: "spelling" | "some";
 };
 
-const words = (s: string) => s.toLowerCase().split(/[^a-z0-9./-]+/).filter(Boolean);
+const words = (s: string) => s.toLowerCase().split(/[^a-z0-9./-]+/).filter((t) => squash(t) !== "");
+
+/** Each shelf's own name and the names of the departments above it, for search. */
+export function shelfWords(categories: Pick<Category, "id" | "parent_id" | "name" | "live">[]): Map<string, string> {
+  const byId = new Map(categories.map((c) => [c.id, c]));
+  const out = new Map<string, string>();
+  for (const c of categories) {
+    const names: string[] = [];
+    for (let at: (typeof categories)[number] | undefined = c, hops = 0; at && hops < 8; at = at.parent_id ? byId.get(at.parent_id) : undefined, hops++) {
+      if (at.live) names.push(at.name);
+    }
+    out.set(c.id, names.join(" "));
+  }
+  return out;
+}
+
+// An item's searchable words, worked out once and reused while the shopper types.
+const prepared = new WeakMap<Product, { x: ShopXref[] | undefined; shelf: string; w: Words }>();
+function wordsFor(product: Product, x: ShopXref[] | undefined, shelf: string): Words {
+  const had = prepared.get(product);
+  if (had && had.x === x && had.shelf === shelf) return had.w;
+  const main = [product.name, product.part_number, product.thread, product.size, product.dash, product.brand, ...(x ?? []).flatMap((r) => [r.brand, r.number])].join(" ");
+  const extra = [product.type !== "other" ? typeOf(product.type).label : "", shelf, product.description].join(" ");
+  const w = prepareWords(main, extra);
+  prepared.set(product, { x, shelf, w });
+  return w;
+}
 
 /**
  * Finds items by number first, then by words. A number is compared with its
  * punctuation and spaces taken out, so 86-572263, 86572263 and "86 572263"
- * are one number. Words must all appear in the item's name, specs or numbers.
+ * are one number. Every word must match the item's name, specs, numbers,
+ * shelf or description, and a word is forgiven its form: no hyphen ("oring"),
+ * a plural, or shop shorthand ("orb"). A size or number is never guessed at.
+ * Only when nothing matches for certain are guesses offered, and they are
+ * marked: first items a typing slip away, then items that match at least
+ * half of the words.
  */
-export function searchProducts(products: Product[], xrefs: Map<string, ShopXref[]>, query: string): Hit[] {
+export function searchProducts(products: Product[], xrefs: Map<string, ShopXref[]>, query: string, shelves?: Map<string, string>): Hit[] {
   const q = query.trim();
   if (!q) return products.map((product) => ({ product, score: 0, because: "" }));
   const norm = numberNorm(q);
   const terms = words(q);
   const hits: Hit[] = [];
+  const partial: Hit[] = [];
   for (const product of products) {
     let score = 0;
     let because = "";
+    let loose: Hit["loose"];
     const own = numberNorm(product.part_number);
     if (norm.length >= 3) {
       if (own && own === norm) score = 100;
@@ -54,22 +90,24 @@ export function searchProducts(products: Product[], xrefs: Map<string, ShopXref[
       }
     }
     if (!score && terms.length) {
-      const hay = [
-        product.name,
-        product.part_number,
-        product.thread,
-        product.size,
-        product.dash,
-        product.brand,
-        ...(xrefs.get(product.id) ?? []).flatMap((x) => [x.brand, x.number]),
-      ]
-        .join(" ")
-        .toLowerCase();
-      if (terms.every((t) => hay.includes(t))) score = 20;
+      const w = wordsFor(product, xrefs.get(product.id), shelves?.get(product.category_id ?? "") ?? "");
+      const tiers = terms.map((t) => termTier(w, t));
+      const worst = Math.min(...tiers);
+      if (worst === 3) score = 20;
+      else if (worst === 2) score = 16;
+      else if (worst === 1) {
+        score = 10;
+        loose = "spelling";
+      } else {
+        const matched = tiers.filter((t) => t > 0).length;
+        if (terms.length >= 2 && matched >= Math.ceil(terms.length / 2)) partial.push({ product, score: matched, because: "", loose: "some" });
+      }
     }
-    if (score) hits.push({ product, score, because });
+    if (score) hits.push(loose ? { product, score, because, loose } : { product, score, because });
   }
-  return hits.sort((a, b) => b.score - a.score || a.product.sort - b.product.sort || a.product.name.localeCompare(b.product.name));
+  // A guess is only offered when nothing matched for certain: "seal" should not also bring up "seat".
+  const firm = hits.filter((h) => !h.loose);
+  return (firm.length ? firm : hits.length ? hits : partial).sort((a, b) => b.score - a.score || a.product.sort - b.product.sort || a.product.name.localeCompare(b.product.name));
 }
 
 export type FitState =

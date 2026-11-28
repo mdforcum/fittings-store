@@ -10,6 +10,7 @@ import {
   readGarage,
   removeFromGarage,
   searchProducts,
+  shelfWords,
   shopNav,
   underCategory,
   warrantyText,
@@ -270,7 +271,8 @@ export default function Shop({ products: listed, settings: base, ok, openCart, o
   const anyFitment = Object.keys(fits).length > 0 || products.some((p) => p.universal);
   const conditions = [...new Set(products.map((p) => p.condition))];
   const searching = q.trim().length > 0;
-  const hits = searchProducts(products, xrefMap, q).filter(({ product: p }) => {
+  const shelfNames = useMemo(() => shelfWords(categories), [categories]);
+  const hits = searchProducts(products, xrefMap, q, shelfNames).filter(({ product: p }) => {
     if (nav.length ? shelfIds && !shelfIds.has(p.category_id ?? "") : filter !== "all" && p.type !== filter) return false;
     if (condition !== "all" && p.condition !== condition) return false;
     if (instock && !sellable(p)) return false;
@@ -280,6 +282,8 @@ export default function Shop({ products: listed, settings: base, ok, openCart, o
     return true;
   });
   const because = new Map(hits.map((h) => [h.product.id, h.because]));
+  // Every result is a best guess: say so, so a close match is never taken for an exact one.
+  const guess = searching && hits.length > 0 && hits.every((h) => h.loose) ? hits[0].loose : undefined;
   const shown = hits.map((h) => h.product);
   const present = TYPES.filter((t) => products.some((p) => p.type === t.id));
   const catName = new Map(categories.map((c) => [c.id, c.name]));
@@ -369,7 +373,7 @@ export default function Shop({ products: listed, settings: base, ok, openCart, o
             <input
               type="search"
               id="q"
-              placeholder="Part #, the OEM number it replaces, thread or size"
+              placeholder="Part #, OEM number, thread, size or a few words"
               autoComplete="off"
               value={q}
               onChange={(e) => setQ(e.target.value)}
@@ -451,6 +455,13 @@ export default function Shop({ products: listed, settings: base, ok, openCart, o
           <p className="place-note">
             Showing parts on the shelf at {place.name}
             {place.town ? `, ${place.town}` : ""}.
+          </p>
+        )}
+        {guess && (
+          <p className="place-note" role="status">
+            {guess === "spelling"
+              ? `No exact match for "${q.trim()}". These are the closest parts. Check the name and size before you order.`
+              : `Nothing matches every word in "${q.trim()}". These match some of them.`}
           </p>
         )}
         {ok && products.length > 0 && shown.length === 0 && (

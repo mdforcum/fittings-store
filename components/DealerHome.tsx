@@ -56,6 +56,9 @@ export default function DealerHome({ data, call, go, reload }: { data: PortalDat
         <p className="sub" role="status">
           {needs.open ? `${needs.open} order${needs.open === 1 ? "" : "s"} waiting on you.` : "Nothing is waiting on you."}
           {at ? ` Updated ${new Date(at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}.` : ""}
+          {data.refresh_minutes > 0
+            ? ` This page checks for new orders every ${data.refresh_minutes} minute${data.refresh_minutes === 1 ? "" : "s"}. Press Refresh to check now.`
+            : " Press Refresh to check for new orders."}
         </p>
         <button type="button" className="btn ghost" disabled={busy} onClick={refresh}>
           {busy ? "Refreshing…" : "Refresh"}
