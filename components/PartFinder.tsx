@@ -3,7 +3,8 @@
 // words, type or scan a part number or UPC and press Enter, scan a bin code to
 // see everything in that bin, or take a photo. A plug-in barcode scanner works
 // as it is: it types the code and presses Enter.
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import LiveScan from "./LiveScan";
 import { exactLookup, goesWith, photoMatches, smartSearch, type LookupBin, type LookupIndex, type LookupPart, type PhotoMatch, type PhotoRead } from "@/lib/lookup";
 import { prepare } from "@/lib/scan";
 
@@ -30,6 +31,8 @@ type Props = {
   inputId: string;
   itemClass?: string;
   pickWord?: string;
+  /** Keep the camera on after a scan, for scanning one part after another (a counter sale). */
+  keepScanning?: boolean;
 };
 
 function toBase64(bytes: ArrayBuffer): string {
@@ -39,7 +42,14 @@ function toBase64(bytes: ArrayBuffer): string {
   return btoa(s);
 }
 
-export default function PartFinder({ parts, index, shelf, onPick, photo, onLink, onBin, onQuery, results = true, meta, label, inputId, itemClass = "pf-match", pickWord = "Add" }: Props) {
+export default function PartFinder({ parts, index, shelf, onPick, photo, onLink, onBin, onQuery, results = true, meta, label, inputId, itemClass = "pf-match", pickWord = "Add", keepScanning = false }: Props) {
+  // The live camera: offered only where the browser can open one.
+  const [canScan, setCanScan] = useState(false);
+  const [live, setLive] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setCanScan(typeof navigator !== "undefined" && !!navigator.mediaDevices?.getUserMedia), 0);
+    return () => clearTimeout(t);
+  }, []);
   const [q, setQ] = useState("");
   const [note, setNote] = useState<{ text: string; bad: boolean } | null>(null);
   const [bin, setBin] = useState<LookupBin | null>(null);
@@ -111,6 +121,22 @@ export default function PartFinder({ parts, index, shelf, onPick, photo, onLink,
     if (!found.length) setNote({ text: "Nothing matches that. Check the number, or try a word from the name.", bad: true });
   }
 
+  /** A code read by the live camera. */
+  function fromCamera(code: string) {
+    setNote(null);
+    if (resolve(code, `Scanned ${code}`)) {
+      if (!keepScanning) setLive(false);
+      return;
+    }
+    clearPanels();
+    if (onLink && /^\d{6,14}$/.test(code)) {
+      setUnknown(code);
+      setLive(false);
+      return setNote({ text: `Barcode ${code} isn't linked to a part yet. Find the part below and pick it to link them.`, bad: false });
+    }
+    setNote({ text: `Nothing here has the code ${code}.`, bad: true });
+  }
+
   async function fromPhoto(file: File | undefined) {
     if (!file) return;
     setBusy("photo");
@@ -179,12 +205,18 @@ export default function PartFinder({ parts, index, shelf, onPick, photo, onLink,
             }}
           />
         </label>
+        {canScan && (
+          <button type="button" className="btn ghost pf-live" aria-pressed={live} onClick={() => setLive(!live)}>
+            {live ? "Stop camera" : "Scan with camera"}
+          </button>
+        )}
         <label className={`btn ghost pf-cam${busy ? " busy" : ""}`}>
           {busy === "photo" ? "Reading…" : photo ? "Photo or barcode" : "Scan barcode"}
           <input type="file" accept="image/*" capture="environment" disabled={!!busy} onChange={(e) => { void fromPhoto(e.target.files?.[0]); e.target.value = ""; }} />
         </label>
       </div>
       <p className="hint pf-help">Type, or scan with a barcode scanner. Enter picks an exact match.</p>
+      {live && <LiveScan onCode={fromCamera} onClose={() => setLive(false)} />}
       {note && (
         <p className={note.bad ? "err" : "pf-note"} role={note.bad ? "alert" : "status"}>
           {note.text}

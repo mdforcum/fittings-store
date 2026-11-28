@@ -152,6 +152,7 @@ export default function Counter({ data, act, say }: Props) {
         meta={meta}
         label="Add a part"
         inputId="ct-q"
+        keepScanning
         itemClass="ct-match"
         photo={async (image, type) => {
           const r = await act("lookup.photo", { image, type });
