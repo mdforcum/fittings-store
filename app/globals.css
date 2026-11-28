@@ -863,3 +863,7 @@ label.btn:focus-within { outline: 2px solid var(--focus); outline-offset: 2px; }
 .ds-receive label { display: grid; gap: 4px; font-weight: 600; }
 .ds-receive input { width: 8rem; min-height: 48px; font-size: 1.2rem; }
 .ds-putaway { font-size: 1.1rem; }
+
+/* dealer page: the offer to put it on the home screen */
+.ih { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--rule); background: var(--surface); margin: 10px 0; }
+.ih p { margin: 0; }

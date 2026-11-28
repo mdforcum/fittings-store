@@ -6,6 +6,7 @@ import type { PortalData, PortalEvent } from "@/app/api/dealer/route";
 import { MODE_LABEL, checkStep, eventText, type ShipCheckMode } from "@/lib/roles";
 import { dealerNeeds, waited } from "@/lib/home";
 import type { LowLine } from "@/lib/operations";
+import InstallHint from "./InstallHint";
 
 type Reply = { ok: boolean; message?: string; data?: PortalData; result?: Record<string, unknown> };
 type Call = (body: Record<string, unknown>) => Promise<Reply>;
@@ -106,6 +107,7 @@ export default function DealerHome({ data, call, go, reload, onData }: { data: P
           {busy ? "Refreshing…" : "Refresh"}
         </button>
       </div>
+      <InstallHint />
       <section aria-labelledby="dh-needs">
         <h2 id="dh-needs">Needs you now</h2>
         <ul className="home-tiles">
