@@ -4,12 +4,13 @@ import crypto from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { lockMinutes, makeToken, passwordTag, tokenSigned, tokenUser, verifyPassword } from "./passwords";
+import { readRole, type Role } from "./roles";
 import { env } from "./server";
 
 const COOKIE = "fittings_dealer";
 const MAX_AGE_S = 60 * 60 * 24 * 14;
 
-export type DealerUser = { id: string; dealer_id: string; email: string; name: string };
+export type DealerUser = { id: string; dealer_id: string; email: string; name: string; role: Role };
 export type DealerSession = { user: DealerUser; dealer: { id: string; name: string; slug: string } };
 
 function key(): Buffer | null {
@@ -17,7 +18,7 @@ function key(): Buffer | null {
   return crypto.createHash("sha256").update(`fittings-dealer:${env.secret}`).digest();
 }
 
-type UserRow = DealerUser & { password_hash: string; disabled: boolean; failed_logins: number; locked_until: string | null };
+type UserRow = Omit<DealerUser, "role"> & { role?: string; password_hash: string; disabled: boolean; failed_logins: number; locked_until: string | null };
 
 async function userById(db: SupabaseClient, id: string): Promise<UserRow | null> {
   const r = await db.from("fittings_dealer_users").select("*").eq("id", id).maybeSingle();
@@ -34,7 +35,7 @@ export async function currentDealer(db: SupabaseClient): Promise<DealerSession |
   if (!user || user.disabled || !tokenSigned(token, passwordTag(user.password_hash), k)) return null;
   const d = await db.from("fittings_dealers").select("id, name, slug").eq("id", user.dealer_id).maybeSingle();
   if (d.error || !d.data) return null;
-  return { user: { id: user.id, dealer_id: user.dealer_id, email: user.email, name: user.name }, dealer: d.data as DealerSession["dealer"] };
+  return { user: { id: user.id, dealer_id: user.dealer_id, email: user.email, name: user.name, role: readRole(user.role) }, dealer: d.data as DealerSession["dealer"] };
 }
 
 /** Checks the password; on success sets the cookie. Returns plain words when it fails. */

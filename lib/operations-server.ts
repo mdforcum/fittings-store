@@ -11,6 +11,7 @@ import { env, setConfig } from "./server";
 import { refundLabel, type RefundStatus } from "./shippo";
 import { getStripe } from "./payments";
 import { onhandMap } from "./places";
+import { readRole } from "./roles";
 import { expandParts, type PickKitItem, type PickMark, type PickOrderItem, type PickProduct } from "./picking";
 import type { PickProgress, SaleRow } from "./home";
 import { emailReady, queueLowStock, sendQueued, textReady } from "./notify";
@@ -346,11 +347,17 @@ export async function runOps(action: string, a: Payload, db: SupabaseClient): Pr
       if (!isId(a.dealer_id)) fail("Pick a dealer.");
       const r = await db
         .from("fittings_dealer_users")
-        .select("id, email, name, disabled, created_at, last_login_at")
+        .select("*")
         .eq("dealer_id", a.dealer_id as string)
         .order("created_at");
       if (missing(r.error)) fail(NOT_SET_UP);
-      return { users: r.data ?? [] };
+      const rows = (r.data ?? []) as Array<Record<string, unknown>>;
+      // Roles came with supabase/add-dealer-roles.sql; before it every login is a manager in all but name.
+      const roles = rows.length ? rows.every((u) => "role" in u) : !(await db.from("fittings_dealer_users").select("role").limit(1)).error;
+      return {
+        roles,
+        users: rows.map((u) => ({ id: u.id, email: u.email, name: u.name, disabled: u.disabled, created_at: u.created_at, last_login_at: u.last_login_at, role: readRole(u.role) })),
+      };
     }
 
     case "dealer_user.save": {
@@ -364,11 +371,33 @@ export async function runOps(action: string, a: Payload, db: SupabaseClient): Pr
       if (missing(cur.error)) fail(NOT_SET_UP);
       if (cur.data && cur.data.dealer_id !== a.dealer_id) fail("That email already signs in for another dealer.");
       const row = { dealer_id: a.dealer_id, email, name: str(a.name, 80), password_hash: hashPassword(pw), disabled: false, failed_logins: 0, locked_until: null };
-      const r = cur.data
-        ? await db.from("fittings_dealer_users").update(row).eq("id", cur.data.id as string)
-        : await db.from("fittings_dealer_users").insert(row);
+      // A new login gets the role picked for it; resetting a password leaves the role as it is.
+      const role = a.role === "manager" || a.role === "worker" ? a.role : null;
+      const save = (withRole: boolean) =>
+        cur.data
+          ? db.from("fittings_dealer_users").update(row).eq("id", cur.data.id as string)
+          : db.from("fittings_dealer_users").insert((withRole && role ? { ...row, role } : row) as Record<string, unknown>);
+      let r = await save(true);
+      if (r.error && /role/.test(r.error.message)) r = await save(false);
       if (r.error) fail(r.error.message);
       return { saved: email, reset: !!cur.data };
+    }
+
+    case "dealer_user.role": {
+      if (!isId(a.user_id)) fail("Pick the login.");
+      if (a.role !== "manager" && a.role !== "worker") fail("Pick manager or worker.");
+      const who = await db.from("fittings_dealer_users").select("*").eq("id", a.user_id as string).maybeSingle();
+      if (who.error || !who.data) fail("That login isn't there any more.");
+      const user = who.data as Record<string, unknown>;
+      if (!("role" in user)) fail("Run supabase/add-dealer-roles.sql in the Supabase SQL Editor first.");
+      if (a.role === "worker" && user.role === "manager") {
+        // A dealer with nobody to approve counts or override a check would be stuck.
+        const others = await db.from("fittings_dealer_users").select("id").eq("dealer_id", String(user.dealer_id)).eq("role", "manager").eq("disabled", false).neq("id", a.user_id as string).limit(1);
+        if (!(others.data ?? []).length) fail("This is the dealer's only manager. Make someone else a manager first.");
+      }
+      const r = await db.from("fittings_dealer_users").update({ role: a.role }).eq("id", a.user_id as string);
+      if (r.error) fail(r.error.message);
+      return {};
     }
 
     case "dealer_user.disable": {

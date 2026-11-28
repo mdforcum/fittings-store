@@ -15,7 +15,7 @@ type Call = (body: Record<string, unknown>) => Promise<Reply>;
 
 const SHOW = 60;
 
-export default function DealerStock({ locations, supportEmail, call }: { locations: PortalData["locations"]; supportEmail: string; call: Call }) {
+export default function DealerStock({ locations, supportEmail, call, onHeld }: { locations: PortalData["locations"]; supportEmail: string; call: Call; /** A count went to a manager: the page's own data is now out of date. */ onHeld?: () => void }) {
   const [stock, setStock] = useState<PortalStock | null>(null);
   const [loc, setLoc] = useState(locations[0]?.id ?? "");
   const [q, setQ] = useState("");
@@ -65,7 +65,17 @@ export default function DealerStock({ locations, supportEmail, call }: { locatio
     setBusy("");
     if (r.ok && r.result?.stock) {
       setStock(r.result.stock as PortalStock);
-      setNote({ text: okText, bad: false });
+      // A worker's big change waits for a manager; say so instead of saying it saved.
+      const held = Number(r.result.waiting ?? 0);
+      if (held) onHeld?.();
+      const over = Number(r.result.hold_over ?? 0);
+      const changed = Number(r.result.changed ?? 0);
+      setNote({
+        text: held
+          ? `${held === 1 ? "That count is" : `${held} counts are`} waiting for a manager's OK, because ${held === 1 ? "it changes" : "they change"} the number by more than ${over}.${changed ? ` ${changed} other count${changed === 1 ? " was" : "s were"} saved.` : ""}`
+          : okText,
+        bad: false,
+      });
       return true;
     }
     setNote({ text: r.message ?? "That didn't save. Try again.", bad: true });

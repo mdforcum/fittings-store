@@ -782,3 +782,19 @@ label.btn:focus-within { outline: 2px solid var(--focus); outline-offset: 2px; }
   .home-tile { min-height: 110px; padding: 10px; }
   .home-shortcuts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+/* dealer page: the second check, held counts and shop rules */
+.po-who { margin: 4px 0 0; }
+.po-check { display: grid; gap: 8px; justify-items: start; padding: 12px; border: 1px solid var(--rule); border-left: 6px solid var(--zinc); background: var(--surface); margin-top: 8px; }
+.po-check p { margin: 0; }
+.po-checked { margin: 8px 0; padding: 8px 12px; border-left: 4px solid var(--ok); background: var(--ok-bg); }
+.po-override { display: grid; gap: 6px; width: 100%; }
+.po-override label { display: grid; gap: 4px; font-weight: 600; }
+.po-override input { width: 100%; min-width: 0; box-sizing: border-box; }
+.dh-waiting li { align-items: center; }
+.dh-rules { display: grid; gap: 8px; justify-items: start; }
+.dh-rules label { display: grid; gap: 4px; font-weight: 600; }
+.dh-rules input { width: 110px; }
+.dh-rules select, .dh-rules input { min-height: 48px; }
+.dh-rules p { margin: 0; }
+@media print { .po-check, .po-checked, .po-who { display: none; } }

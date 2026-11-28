@@ -7,6 +7,7 @@ import { LABELS_KEY, QUOTE_MINUTES, labelCharge, packageGuess, parcelFrom, quote
 import { DEALER_REFRESH_KEY, IMPORT_LIMIT, locationShipFrom, readDealerRefresh, runningLow, type LowLine } from "@/lib/operations";
 import { buildIndex, readPartPhoto } from "@/lib/lookup-server";
 import { onhandMap } from "@/lib/places";
+import { OVERRIDE_MIN, checkProblem, readRules, splitCounts, type DealerRules, type Role, type ShipCheck } from "@/lib/roles";
 import { normalizeLocation } from "@/lib/places";
 import { monthOf, monthRange, readSettlement } from "@/lib/settlements";
 import { adminDb, env, getConfig, json } from "@/lib/server";
@@ -34,7 +35,28 @@ export type PortalOrder = {
   shipped: Array<{ location_id: string; carrier: string; tracking_number: string; shipped_at: string; has_label: boolean }>;
   /** A starting package for each location, from the parts' saved weight and box size. Blank where unknown. */
   packages: Record<string, { weight_lb: string; length: string; width: string; height: string }>;
+  /** Who packed and who checked, by location, when the dealer asks for a second check. */
+  checks: Record<string, ShipCheck>;
 };
+
+/** A count waiting for a manager's yes or no. */
+export type PortalWaiting = {
+  id: number;
+  location_id: string;
+  product_id: string;
+  name: string;
+  part_number: string;
+  from_qty: number;
+  to_qty: number;
+  /** The count on the shelf right now, which may have moved since it was asked. */
+  now: number;
+  asked_name: string;
+  asked_at: string;
+  mine: boolean;
+};
+
+/** One line of the dealer's activity log. */
+export type PortalEvent = { id: number; action: string; user_name: string; role: string; order_number: number | null; detail: Record<string, unknown>; created_at: string };
 
 /** The dealer's own shelves: the catalog, the counts at its locations, and what's running low there. */
 export type PortalStock = {
@@ -58,17 +80,49 @@ export type PortalData = {
   orders: PortalOrder[];
   /** Minutes between the page's own reloads while it is on screen; 0 is off. */
   refresh_minutes: number;
+  /** The signed-in person and what they may do. */
+  me: { id: string; name: string; role: Role };
+  /** This dealer's own rules: the second check and held counts. */
+  rules: DealerRules;
+  /** Counts waiting for a manager: all of them for a manager, a worker's own for a worker. */
+  waiting: PortalWaiting[];
 };
 
 async function load(db: SupabaseClient, s: DealerSession): Promise<PortalData> {
-  const [lo, st, lab, every] = await Promise.all([
+  const [lo, st, lab, every, dl] = await Promise.all([
     db.from("fittings_locations").select("id, name, code").eq("dealer_id", s.dealer.id).eq("kind", "store").order("sort"),
     db.from("fittings_settings").select("email").eq("id", 1).maybeSingle(),
     getConfig<unknown>(db, LABELS_KEY),
     getConfig<unknown>(db, DEALER_REFRESH_KEY),
+    db.from("fittings_dealers").select("*").eq("id", s.dealer.id).maybeSingle(),
   ]);
   const locations = (lo.data ?? []) as PortalData["locations"];
   const mine = locations.map((l) => l.id);
+  // Second checks and held counts came with supabase/add-dealer-roles.sql; without it there are no rules.
+  const [ck, cr] = mine.length
+    ? await Promise.all([
+        db.from("fittings_ship_checks").select("*").in("location_id", mine).limit(5000),
+        db.from("fittings_count_requests").select("*").eq("dealer_id", s.dealer.id).eq("status", "pending").order("id").limit(500),
+      ])
+    : [{ data: [], error: null }, { data: [], error: null }];
+  const rules = readRules(dl.error ? null : (dl.data as Record<string, unknown> | null), !ck.error && !cr.error);
+  const checkRows = (ck.error ? [] : (ck.data ?? [])) as Array<Record<string, unknown>>;
+  const checksFor = (orderId: string) => {
+    const out: PortalOrder["checks"] = {};
+    for (const c of checkRows) {
+      if (c.order_id !== orderId) continue;
+      out[String(c.location_id)] = {
+        packed_by: typeof c.packed_by === "string" ? c.packed_by : null,
+        packed_name: String(c.packed_name ?? ""),
+        packed_at: String(c.packed_at ?? ""),
+        checked_name: String(c.checked_name ?? ""),
+        checked_at: typeof c.checked_at === "string" ? c.checked_at : null,
+        override_reason: String(c.override_reason ?? ""),
+      };
+    }
+    return out;
+  };
+  const waiting = await waitingCounts(db, s, rules.ready ? ((cr.data ?? []) as Array<Record<string, unknown>>) : []);
   const base = {
     dealer: { name: s.dealer.name },
     user: { email: s.user.email, name: s.user.name },
@@ -77,6 +131,9 @@ async function load(db: SupabaseClient, s: DealerSession): Promise<PortalData> {
     locations,
     orders: [] as PortalOrder[],
     refresh_minutes: readDealerRefresh(every),
+    me: { id: s.user.id, name: s.user.name || s.user.email, role: s.user.role },
+    rules,
+    waiting,
   };
   if (!mine.length) return base;
   const al = await db.from("fittings_allocations").select("order_id, product_id, location_id, qty").in("location_id", mine).limit(5000);
@@ -148,6 +205,7 @@ async function load(db: SupabaseClient, s: DealerSession): Promise<PortalData> {
           has_label: typeof x.shippo_transaction_id === "string" && x.shippo_transaction_id !== "",
         })),
       packages: packagesFor(r.id as string),
+      checks: checksFor(r.id as string),
     }),
   );
   return { ...base, orders };
@@ -160,8 +218,56 @@ const bad = (message: string, status = 400) => json({ ok: false, message }, stat
  * are on, the order ships by parcel, this location pulled parts for it and
  * hasn't shipped them yet.
  */
+/** Counts waiting for a manager, with the part's name and the count on the shelf now. A worker sees only their own. */
+async function waitingCounts(db: SupabaseClient, s: DealerSession, rows: Array<Record<string, unknown>>): Promise<PortalWaiting[]> {
+  const mineOnly = s.user.role !== "manager";
+  const list = rows.filter((r) => !mineOnly || r.asked_by === s.user.id);
+  if (!list.length) return [];
+  const ids = [...new Set(list.map((r) => String(r.product_id)))].slice(0, 500);
+  const [p, oh] = await Promise.all([
+    db.from("fittings_products").select("id, name, part_number").in("id", ids),
+    db.from("fittings_onhand").select("product_id, location_id, qty").in("product_id", ids).in("location_id", [...new Set(list.map((r) => String(r.location_id)))]),
+  ]);
+  const named = new Map(((p.data ?? []) as Array<Record<string, unknown>>).map((r) => [String(r.id), r]));
+  const have = onhandMap((oh.error ? [] : (oh.data ?? [])) as Array<{ product_id: unknown; location_id: unknown; qty: unknown }>);
+  return list.map((r) => ({
+    id: Number(r.id),
+    location_id: String(r.location_id),
+    product_id: String(r.product_id),
+    name: String(named.get(String(r.product_id))?.name ?? r.product_id),
+    part_number: String(named.get(String(r.product_id))?.part_number ?? ""),
+    from_qty: Number(r.from_qty ?? 0),
+    to_qty: Number(r.to_qty ?? 0),
+    now: have[String(r.product_id)]?.[String(r.location_id)] ?? 0,
+    asked_name: String(r.asked_name ?? ""),
+    asked_at: String(r.asked_at ?? ""),
+    mine: r.asked_by === s.user.id,
+  }));
+}
+
+/** Writes one line to the dealer's activity log. Best effort: a missing table never stops the work itself. */
+async function logEvent(db: SupabaseClient, s: DealerSession, action: string, extra: { order_id?: string; location_id?: string; detail?: Record<string, unknown> } = {}) {
+  await db.from("fittings_dealer_events").insert({
+    dealer_id: s.dealer.id,
+    user_id: s.user.id,
+    user_name: s.user.name || s.user.email,
+    role: s.user.role,
+    action,
+    order_id: extra.order_id ?? null,
+    location_id: extra.location_id ?? null,
+    detail: extra.detail ?? {},
+  });
+}
+
+/** True when the dealer asks for a second check and this order hasn't had it at this location. */
+async function checkNeeded(db: SupabaseClient, orderId: string, locationId: string): Promise<boolean> {
+  const r = await db.rpc("fittings_ship_check_needed", { p_order: orderId, p_location: locationId });
+  return !r.error && r.data === true;
+}
+
 async function labelSetup(db: SupabaseClient, s: DealerSession, a: Payload) {
   if (!isId(a.order_id) || !isId(a.location_id)) return bad("Pick the order.");
+  if (await checkNeeded(db, a.order_id, a.location_id)) return bad(checkProblem("ship check needed"));
   const settings = readLabels(await getConfig<unknown>(db, LABELS_KEY));
   if (!settings.on || !env.shippo || !env.secret) return bad("Buying labels here isn't turned on. Enter the tracking number instead.");
   const [loc, ord, al, sh] = await Promise.all([
@@ -256,6 +362,63 @@ async function run(action: string, a: Payload, db: SupabaseClient, s: DealerSess
   // The dealer's own shelves -------------------------------------------------------------
   if (action === "stock.load") return json({ ok: true, result: { stock: await loadStock(db, s) } });
 
+  // The second check before shipping -------------------------------------------------
+  if (action === "check.pack" || action === "check.pass") {
+    if (!isId(a.order_id) || !isId(a.location_id)) return bad("Pick the order.");
+    const reason = str(a.reason, 300);
+    if (action === "check.pass" && a.override === true && reason.length < OVERRIDE_MIN) return bad(checkProblem("give a reason"));
+    const r =
+      action === "check.pack"
+        ? await db.rpc("fittings_ship_check_pack", { p_order: a.order_id, p_location: a.location_id, p_user: s.user.id })
+        : await db.rpc("fittings_ship_check_pass", { p_order: a.order_id, p_location: a.location_id, p_user: s.user.id, p_reason: a.override === true ? reason : "" });
+    if (r.error) return bad(/does not exist|schema cache|PGRST20/.test(`${r.error.code} ${r.error.message}`) ? "The second check isn't set up yet." : checkProblem(r.error.message));
+    return json({ ok: true, data: await load(db, s), result: { how: action === "check.pack" ? "packed" : r.data } });
+  }
+
+  // A manager sets the shop's own rules ---------------------------------------------
+  if (action === "rules.save") {
+    if (s.user.role !== "manager") return bad("Only a manager can change the shop rules.", 403);
+    const mode = a.ship_check === "any" || a.ship_check === "manager" ? a.ship_check : a.ship_check === "off" ? "off" : null;
+    const hold = typeof a.count_hold_over === "number" && Number.isInteger(a.count_hold_over) ? a.count_hold_over : -1;
+    if (!mode) return bad("Pick how orders are checked.");
+    if (hold < 0 || hold > 100000) return bad("Enter a whole number, 0 or more.");
+    const r = await db.from("fittings_dealers").update({ ship_check: mode, count_hold_over: hold }).eq("id", s.dealer.id);
+    if (r.error) return bad("The shop rules aren't set up yet.");
+    await logEvent(db, s, "rules", { detail: { ship_check: mode, count_hold_over: hold } });
+    return json({ ok: true, data: await load(db, s) });
+  }
+
+  // A manager answers a held count -----------------------------------------------------
+  if (action === "count.decide") {
+    const id = typeof a.id === "number" && Number.isInteger(a.id) ? a.id : 0;
+    if (!id) return bad("Pick the count.");
+    if (s.user.role !== "manager") return bad(checkProblem("manager needed"), 403);
+    const r = await db.rpc("fittings_count_decide", { p_id: id, p_user: s.user.id, p_approve: a.approve === true });
+    if (r.error) return bad(checkProblem(r.error.message));
+    return json({ ok: true, data: await load(db, s), result: { how: r.data } });
+  }
+
+  // Who did what, for managers ---------------------------------------------------------
+  if (action === "events.list") {
+    if (s.user.role !== "manager") return bad(checkProblem("manager needed"), 403);
+    const r = await db.from("fittings_dealer_events").select("*").eq("dealer_id", s.dealer.id).order("id", { ascending: false }).limit(60);
+    if (r.error) return json({ ok: true, result: { events: [] } });
+    const rows = (r.data ?? []) as Array<Record<string, unknown>>;
+    const orderIds = [...new Set(rows.map((e) => e.order_id).filter((v): v is string => typeof v === "string"))];
+    const nums = new Map<string, number>();
+    if (orderIds.length) for (const o of (await db.from("fittings_orders").select("id, number").in("id", orderIds)).data ?? []) nums.set(o.id as string, o.number as number);
+    const events: PortalEvent[] = rows.map((e) => ({
+      id: Number(e.id),
+      action: String(e.action),
+      user_name: String(e.user_name ?? ""),
+      role: String(e.role ?? ""),
+      order_number: typeof e.order_id === "string" ? (nums.get(e.order_id) ?? null) : null,
+      detail: (e.detail as Record<string, unknown>) ?? {},
+      created_at: String(e.created_at ?? ""),
+    }));
+    return json({ ok: true, result: { events } });
+  }
+
   // Home's quick look: what's running low on this dealer's own shelves.
   if (action === "home") return json({ ok: true, result: { low: await loadLow(db, s) } });
 
@@ -270,16 +433,50 @@ async function run(action: string, a: Payload, db: SupabaseClient, s: DealerSess
       if (raw.length > IMPORT_LIMIT) return bad(`Save up to ${IMPORT_LIMIT} counts at a time.`);
       const lines = raw.map((l) => ({ product_id: str(l?.product_id, 80), qty: typeof l?.qty === "number" && Number.isInteger(l.qty) ? l.qty : -1 }));
       if (lines.some((l) => !l.product_id || l.qty < 0 || l.qty > 100000)) return bad("Every count must be a whole number, 0 or more.");
-      // Counts only: a dealer can't change a price or add a part to the catalog here.
-      const r = await db.rpc("fittings_import_counts", {
-        p_location: a.location_id,
-        p_lines: lines.map((l) => ({ product_id: l.product_id, qty: l.qty, price_cents: null })),
-        p_note: `Dealer page count by ${who}`.slice(0, 120),
-      });
-      if (r.error) {
-        return bad(/no item/.test(r.error.message) ? "One of those parts isn't in the catalog. Email Backroad Iron to add it." : "The counts didn't save. Try again.");
+      // What's on the shelf now, to tell a small correction from a big one and to log the change.
+      const ids = [...new Set(lines.map((l) => l.product_id))];
+      const have = new Map<string, number>();
+      const named = new Map<string, string>();
+      for (let i = 0; i < ids.length; i += 300) {
+        const chunk = ids.slice(i, i + 300);
+        const [oh, pn] = await Promise.all([
+          db.from("fittings_onhand").select("product_id, qty").eq("location_id", a.location_id).in("product_id", chunk),
+          db.from("fittings_products").select("id, name").in("id", chunk),
+        ]);
+        for (const r of (oh.data ?? []) as Array<{ product_id: string; qty: number }>) have.set(r.product_id, r.qty);
+        for (const r of (pn.data ?? []) as Array<{ id: string; name: string }>) named.set(r.id, r.name);
       }
-      return json({ ok: true, result: { changed: r.data, stock: await loadStock(db, s) } });
+      if (ids.some((id) => !named.has(id))) return bad("One of those parts isn't in the catalog. Email Backroad Iron to add it.");
+      const dealer = s.user.role === "worker" ? await db.from("fittings_dealers").select("*").eq("id", s.dealer.id).maybeSingle() : null;
+      const rules = readRules(dealer?.data as Record<string, unknown> | null, true);
+      const split = splitCounts(lines, (id) => have.get(id) ?? 0, s.user.role, rules);
+      // Counts only: a dealer can't change a price or add a part to the catalog here.
+      let changed = 0;
+      if (split.apply.length) {
+        const r = await db.rpc("fittings_import_counts", {
+          p_location: a.location_id,
+          p_lines: split.apply.map((l) => ({ product_id: l.product_id, qty: l.qty, price_cents: null })),
+          p_note: `Dealer page count by ${who}`.slice(0, 120),
+        });
+        if (r.error) {
+          return bad(/no item/.test(r.error.message) ? "One of those parts isn't in the catalog. Email Backroad Iron to add it." : "The counts didn't save. Try again.");
+        }
+        changed = Number(r.data ?? 0);
+      }
+      // Big changes by a worker wait for a manager: one open request per part, the newest count wins.
+      for (const h of split.hold) {
+        const row = { from_qty: h.from, to_qty: h.to, asked_by: s.user.id, asked_name: who, asked_at: new Date().toISOString() };
+        const open = await db.from("fittings_count_requests").select("id").eq("location_id", a.location_id).eq("product_id", h.product_id).eq("status", "pending").maybeSingle();
+        const saved = open.data
+          ? await db.from("fittings_count_requests").update(row).eq("id", open.data.id as number)
+          : await db.from("fittings_count_requests").insert({ ...row, dealer_id: s.dealer.id, location_id: a.location_id, product_id: h.product_id });
+        if (saved.error) return bad("A count that needed a manager's OK didn't save. Try again.");
+      }
+      const moved = split.apply.filter((l) => (have.get(l.product_id) ?? 0) !== l.qty);
+      if (moved.length > 20) await logEvent(db, s, "counts", { location_id: a.location_id, detail: { lines: moved.length } });
+      else for (const l of moved) await logEvent(db, s, "count", { location_id: a.location_id, detail: { product_id: l.product_id, name: named.get(l.product_id), from: have.get(l.product_id) ?? 0, to: l.qty } });
+      for (const h of split.hold.slice(0, 50)) await logEvent(db, s, "count_held", { location_id: a.location_id, detail: { product_id: h.product_id, name: named.get(h.product_id), from: h.from, to: h.to } });
+      return json({ ok: true, result: { changed, waiting: split.hold.length, hold_over: rules.count_hold_over, stock: await loadStock(db, s) } });
     }
 
     const pid = str(a.product_id, 80);
@@ -298,6 +495,7 @@ async function run(action: string, a: Payload, db: SupabaseClient, s: DealerSess
       const m = /only (\d+) of/.exec(r.error.message);
       return bad(m ? `Only ${m[1]} on this shelf. Set the count first if that's wrong.` : "The sale didn't save. Try again.");
     }
+    await logEvent(db, s, "sold", { location_id: a.location_id, detail: { product_id: pid, qty } });
     return json({ ok: true, result: { sale_id: r.data, stock: await loadStock(db, s) } });
   }
 
@@ -357,6 +555,7 @@ async function run(action: string, a: Payload, db: SupabaseClient, s: DealerSess
       p_by: s.user.name || s.user.email,
     });
     const result = { label_url: label.label_url, tracking_number: label.tracking_number, carrier: q.carrier, charge_cents: q.charge_cents };
+    if (!rec.error) await logEvent(db, s, "label", { order_id: setup.order.id, location_id: setup.location.id, detail: { carrier: q.carrier, tracking: label.tracking_number, charge_cents: q.charge_cents } });
     if (rec.error) {
       // The label exists and was paid for: hand it over, and say plainly it isn't on the order yet.
       console.error("dealer label bought but not recorded", setup.order.id, setup.location.id, label.transaction_id, rec.error.message);
@@ -429,6 +628,7 @@ export async function POST(req: Request) {
     const tracking = str(a.tracking_number, 80);
     const pickup = a.pickup === true;
     if (!pickup && !tracking) return json({ ok: false, message: "Enter the tracking number." }, 400);
+    if (await checkNeeded(db, a.order_id, a.location_id)) return json({ ok: false, message: checkProblem("ship check needed") }, 400);
     const r = await db.rpc("fittings_ship_from_location", {
       p_order_id: a.order_id,
       p_location: a.location_id,
@@ -437,11 +637,20 @@ export async function POST(req: Request) {
       p_url: "",
       p_by: s.user.name || s.user.email,
     });
-    if (r.error) return json({ ok: false, message: /no parts on this order|only a paid/.test(r.error.message) ? "That order can't be marked shipped from here." : "That didn't save. Try again." }, 400);
+    if (r.error) {
+      const message = /ship check needed/.test(r.error.message)
+        ? checkProblem(r.error.message)
+        : /no parts on this order|only a paid/.test(r.error.message)
+          ? "That order can't be marked shipped from here."
+          : "That didn't save. Try again.";
+      return json({ ok: false, message }, 400);
+    }
+    await logEvent(db, s, "shipped", { order_id: a.order_id, location_id: a.location_id, detail: pickup ? { carrier: "Picked up" } : { carrier, tracking } });
     return json({ ok: true, data: await load(db, s), result: { done: r.data === true } });
   }
 
   if (action === "statement") {
+    if (s.user.role !== "manager") return json({ ok: false, message: "The statement is for managers. Ask your manager." }, 403);
     const month = /^\d{4}-\d{2}$/.test(str(a.month, 7)) ? str(a.month, 7) : monthOf(new Date().toISOString());
     const { from, to } = monthRange(month);
     const q = await db.from("fittings_settlements").select("*").eq("dealer_id", s.dealer.id).gte("created_at", from).lt("created_at", to).order("created_at");

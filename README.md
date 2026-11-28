@@ -259,9 +259,15 @@ and everything else are reachable only with the secret key.
 - **Package prefill.** On the dealer page, the label's weight is filled in from the parts' saved packed weight (Edit item, Details) when every part has one. The box size is filled in only for a single part with a saved box size. The dealer can change both.
 - **Void a label** (`supabase/add-label-voids.sql`). Staff only: Orders, the shipment line, Void label. Shippo is asked for the refund (it can take up to 14 days to confirm; a used label is turned down and nothing changes), the dealer's statement gets a line that gives the charge back, the shipment comes off the order and the order goes back to To ship. Each void is kept in `fittings_label_voids`.
 
+- **Dealer roles and the second check** (`supabase/add-dealer-roles.sql`). Each dealer login is a **manager** or a **worker**, set under Dealers, Dealers and locations, Dealer page logins. Logins that existed before the change become managers; new ones start as workers, and a dealer can't be left with no manager.
+  - *Workers* pull, pack, ship and count. *Managers* also see the statement, approve held counts, set the shop's rules and see who did what.
+  - *Second check before shipping.* A dealer's manager turns it on from the dealer page's Home, Shop rules: no check, any second person, or a manager. One person marks an order packed; a different person checks it; only then can a label be bought or tracking saved. A manager can pass it alone with a written reason, which is kept. The rule is enforced in the database: no shipment line is written until the check is on record.
+  - *Held counts.* A worker's count that changes a number by more than the dealer's set amount (5 to start; the manager can change it) waits on the manager's Home for a yes or no. Approving sets the count and the stock history names both people.
+  - *Who did what.* Packing, checking, overrides, shipping, labels, counts, approvals and rule changes go into `fittings_dealer_events`, which can't be edited. Managers see the last 60 on Home.
+  - Refunds stay with Backroad Iron. Until this file is run, the dealer page works as before: no roles, no checks.
 - **Real mileage** (`supabase/add-zip-miles.sql`). When an order is routed to a location, "nearest" means the shortest straight-line distance in miles between the shopper's ZIP code and each location's ZIP code. Load the ZIP code table once under Dealers, Dealers and locations, Real mileage (Load ZIP codes). The points come from the open-source `zipcodes` npm package (version 8, BSD licence; its README says the United States list came from federalgovernmentzipcodes.us), kept in `fittings_zip_points`. If a ZIP code is not in the table, or the table is empty, routing falls back to the old rule: same first three ZIP digits, then same state. Nothing changes until the ZIP codes are loaded.
 
-Checks: `supabase/test-operations.sql`, `supabase/test-dealer-labels.sql`, `supabase/test-label-voids.sql` and `supabase/test-zip-miles.sql` on a scratch database with every change loaded.
+Checks: `supabase/test-operations.sql`, `supabase/test-dealer-labels.sql`, `supabase/test-label-voids.sql`, `supabase/test-zip-miles.sql` and `supabase/test-dealer-roles.sql` on a scratch database with every change loaded.
 
 ## The search box
 

@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { PortalData, PortalOrder, PortalQuote } from "@/app/api/dealer/route";
 import { money } from "@/lib/catalog";
 import { DEALER_REFRESH_MINUTES } from "@/lib/operations";
+import { OVERRIDE_MIN, checkStep, type DealerRules, type Role } from "@/lib/roles";
 import DealerHome from "./DealerHome";
 import DealerStock from "./DealerStock";
 import { KIND_LABEL, monthName, monthOf, totals, type SettlementRow } from "@/lib/settlements";
@@ -111,6 +112,102 @@ function LabelLink({ orderId, loc }: { orderId: string; loc: string }) {
       </button>
       {error && <p className="err">{error}</p>}
     </>
+  );
+}
+
+const clock = (iso: string) => new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+type Me = { id: string; name: string; role: Role };
+
+/**
+ * The second check before an order ships, when the dealer asks for one: one
+ * person marks it packed, a different person (or a manager) checks it, and only
+ * then does the shipping step show. A manager can pass it with a written reason.
+ */
+function CheckGate({ o, loc, me, rules, onData, children }: { o: PortalOrder; loc: string; me: Me; rules: DealerRules; onData: (d: PortalData) => void; children: React.ReactNode }) {
+  const check = o.checks?.[loc];
+  const step = checkStep(rules.ready ? rules.ship_check : "off", check, me);
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+  const [reason, setReason] = useState("");
+  const [overriding, setOverriding] = useState(false);
+  if (step.state === "none") return <>{children}</>;
+
+  async function send(action: string, extra: Record<string, unknown> = {}) {
+    setBusy(action);
+    setError("");
+    const r = await call({ action, order_id: o.id, location_id: loc, ...extra });
+    setBusy("");
+    if (r.ok && r.data) return onData(r.data);
+    setError(r.message ?? "That didn't save. Try again.");
+  }
+  const rule = rules.ship_check === "manager" ? "a manager" : "a second person";
+
+  if (step.state === "done" && check) {
+    return (
+      <>
+        <p className="po-checked" role="status">
+          Packed by {check.packed_name}.{" "}
+          {check.override_reason
+            ? `${check.checked_name} overrode the second check on ${clock(check.checked_at ?? "")}: ${check.override_reason}`
+            : `Checked by ${check.checked_name} on ${clock(check.checked_at ?? "")}.`}
+        </p>
+        {children}
+      </>
+    );
+  }
+
+  if (step.state === "pack") {
+    return (
+      <div className="po-check">
+        <p>This shop has {rule} check every order before it ships. Pull and pack the parts, then press the button.</p>
+        <button type="button" className="btn" disabled={!!busy} onClick={() => send("check.pack")}>
+          {busy ? "Saving…" : "Packed. Ready for a check"}
+        </button>
+        {error && <p className="err" role="alert">{error}</p>}
+      </div>
+    );
+  }
+
+  if (step.state !== "wait" || !check) return null;
+  const sayReason = `ovr-${o.id}-${loc}`;
+  return (
+    <div className="po-check">
+      <p role="status">
+        <b>Waiting for a check.</b> Packed by {check.packed_name} on {clock(check.packed_at)}.
+      </p>
+      {step.canCheck && (
+        <button type="button" className="btn" disabled={!!busy} onClick={() => send("check.pass")}>
+          {busy === "check.pass" && !overriding ? "Saving…" : "I checked it. OK to ship"}
+        </button>
+      )}
+      {step.why && <p className="hint">{step.why}</p>}
+      {!step.canCheck && !step.canOverride && (
+        <p className="hint">Have {rule === "a manager" ? "a manager" : "someone else"} sign in on this device, or open this order on their own.</p>
+      )}
+      {step.canOverride &&
+        (overriding ? (
+          <div className="po-override">
+            <label htmlFor={sayReason}>
+              Why is this shipping without a second check?
+              <input id={sayReason} maxLength={300} autoComplete="off" value={reason} onChange={(e) => setReason(e.target.value)} />
+            </label>
+            <p className="hint">Your name and this reason are kept on the order&apos;s record.</p>
+            <div className="inline">
+              <button type="button" className="btn ghost" disabled={!!busy || reason.trim().length < OVERRIDE_MIN} onClick={() => send("check.pass", { override: true, reason })}>
+                {busy ? "Saving…" : "Override and allow shipping"}
+              </button>
+              <button type="button" className="btn ghost" onClick={() => setOverriding(false)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button type="button" className="btn ghost" onClick={() => setOverriding(true)}>
+            Manager override
+          </button>
+        ))}
+      {error && <p className="err" role="alert">{error}</p>}
+    </div>
   );
 }
 
@@ -275,7 +372,16 @@ function ShipStop({ o, loc, labels, onShip, onBought }: { o: PortalOrder; loc: s
   );
 }
 
-function OrderCard({ o, locations, labels, onShip, onBought }: { o: PortalOrder; locations: PortalData["locations"]; labels: boolean } & ShipFns) {
+function OrderCard({
+  o,
+  locations,
+  labels,
+  me,
+  rules,
+  onData,
+  onShip,
+  onBought,
+}: { o: PortalOrder; locations: PortalData["locations"]; labels: boolean; me: Me; rules: DealerRules; onData: (d: PortalData) => void } & ShipFns) {
   const locs = [...new Set(o.lines.map((l) => l.location_id))];
   const [picked, setPicked] = useState<Record<string, boolean>>({});
   const name = (id: string) => locations.find((l) => l.id === id)?.name ?? "";
@@ -316,7 +422,9 @@ function OrderCard({ o, locations, labels, onShip, onBought }: { o: PortalOrder;
                 {done.has_label && <p className="hint po-wrong">Bought the wrong label? Email Backroad Iron and we&apos;ll void it.</p>}
               </div>
             ) : (
-              <ShipStop o={o} loc={loc} labels={labels} onShip={onShip} onBought={onBought} />
+              <CheckGate o={o} loc={loc} me={me} rules={rules} onData={onData}>
+                <ShipStop o={o} loc={loc} labels={labels} onShip={onShip} onBought={onBought} />
+              </CheckGate>
             )}
           </div>
         );
@@ -489,6 +597,10 @@ export default function DealerPortal() {
         <div>
           <p className="eyebrow">Dealer orders</p>
           <h1>{data.dealer.name}</h1>
+          <p className="hint po-who">
+            Signed in as {data.me.name}
+            {data.rules.ready ? ` (${data.me.role})` : ""}. Not you? Sign out and sign in as yourself, so the record is right.
+          </p>
         </div>
         <div className="po-top-actions">
           <button
@@ -538,7 +650,10 @@ export default function DealerPortal() {
             ["statement", "Statement"],
             ["layout", "Shop layout"],
           ] as const
-        ).map(([k, label]) => (
+        )
+          // The statement is money: managers only.
+          .filter(([k]) => k !== "statement" || data.me.role === "manager")
+          .map(([k, label]) => (
           <button key={k} type="button" className="tab" aria-current={view === k ? "page" : undefined} onClick={() => setView(k)}>
             {label}
           </button>
@@ -563,13 +678,13 @@ export default function DealerPortal() {
         </div>
       )}
       {view === "home" ? (
-        <DealerHome data={data} call={call} go={setView} reload={load} />
+        <DealerHome data={data} call={call} go={setView} reload={load} onData={setData} />
       ) : view === "layout" ? (
         <SpaceMapper scope="dealer" say={say} />
       ) : view === "stock" ? (
-        <DealerStock locations={data.locations} supportEmail={data.support_email} call={call} />
+        <DealerStock locations={data.locations} supportEmail={data.support_email} call={call} onHeld={() => void load()} />
       ) : view === "statement" ? (
-        <Statement />
+        data.me.role === "manager" ? <Statement /> : <p className="empty">The statement is for managers. Ask your manager.</p>
       ) : list.length === 0 ? (
         <p className="empty">{view === "open" ? "Nothing to pull right now. New orders show up here, and you'll get an alert if one is set up." : "No finished orders in the last 90 days."}</p>
       ) : (
@@ -580,6 +695,12 @@ export default function DealerPortal() {
               o={o}
               locations={data.locations}
               labels={data.labels}
+              me={data.me}
+              rules={data.rules}
+              onData={(d) => {
+                setData(d);
+                setMessage("");
+              }}
               onBought={(next, b) => {
                 if (next) setData(next);
                 setBought(b);

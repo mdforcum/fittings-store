@@ -407,16 +407,28 @@ function DealerContacts({ dealer, data, act, say }: { dealer: Dealer; data: Admi
   );
 }
 
-type DealerLogin = { id: string; email: string; name: string; disabled: boolean; last_login_at: string | null };
+type DealerLogin = { id: string; email: string; name: string; disabled: boolean; last_login_at: string | null; role: "manager" | "worker" };
 
 /** People at a dealer who can sign in to the dealer page to see and ship their orders. */
 function DealerLogins({ dealer, act, say }: { dealer: Dealer; act: Act; say: Say }) {
   const [users, setUsers] = useState<DealerLogin[] | null>(null);
-  const [f, setF] = useState({ email: "", name: "", password: "" });
+  const [f, setF] = useState({ email: "", name: "", password: "", role: "worker" });
   const [busy, setBusy] = useState(false);
+  // Roles show once supabase/add-dealer-roles.sql has run.
+  const [roles, setRoles] = useState(false);
   async function load() {
     const r = await act("dealer_user.list", { dealer_id: dealer.id });
-    if (r) setUsers((r.users as DealerLogin[]) ?? []);
+    if (!r) return;
+    const list = (r.users as DealerLogin[]) ?? [];
+    setUsers(list);
+    setRoles(r.roles === true);
+    // The first login at a dealer should be a manager: someone has to approve counts and set the shop rules.
+    if (!list.some((u) => u.role === "manager" && !u.disabled)) setF((x) => ({ ...x, role: "manager" }));
+  }
+  async function setRole(u: DealerLogin, role: string) {
+    const r = await act("dealer_user.role", { user_id: u.id, role });
+    if (r) say(`${u.name || u.email} is now a ${role}`);
+    await load();
   }
   async function save(e: React.FormEvent) {
     e.preventDefault();
@@ -425,7 +437,7 @@ function DealerLogins({ dealer, act, say }: { dealer: Dealer; act: Act; say: Say
     setBusy(false);
     if (r) {
       say(r.reset ? `New password set for ${f.email}` : `${f.email} can sign in now. Send them the dealer page link and the password.`);
-      setF({ email: "", name: "", password: "" });
+      setF({ email: "", name: "", password: "", role: "worker" });
       await load();
     }
   }
@@ -440,9 +452,15 @@ function DealerLogins({ dealer, act, say }: { dealer: Dealer; act: Act; say: Say
     <div className="loc-form loc-logins">
       <h3>Dealer page logins</h3>
       <p className="hint">
-        People at {dealer.name} sign in at <span className="mono">/dealer</span> to see orders to pull, print pick lists, mark them shipped and
-        see their statement.
+        People at {dealer.name} sign in at <span className="mono">/dealer</span> to see orders to pull, print pick lists and mark them shipped. Give
+        each person their own login, so the record shows who did what.
       </p>
+      {roles && (
+        <p className="hint">
+          A <b>manager</b> can also see the statement, approve big count changes, set the shop&apos;s rules (such as a second check before an order ships)
+          and override that check with a reason. A <b>worker</b> pulls, packs, ships and counts.
+        </p>
+      )}
       {users == null ? (
         <button type="button" className="btn ghost sm" onClick={load}>
           Show logins
@@ -458,6 +476,12 @@ function DealerLogins({ dealer, act, say }: { dealer: Dealer; act: Act; say: Say
                   <span className="mono">{u.email}</span>
                 </span>
                 <span className={`pill ${u.disabled ? "muted" : "ok"}`}>{u.disabled ? "Off" : u.last_login_at ? "Signed in before" : "Not signed in yet"}</span>
+                {roles && (
+                  <select aria-label={`Role for ${u.name || u.email}`} value={u.role} onChange={(e) => setRole(u, e.target.value)}>
+                    <option value="manager">Manager</option>
+                    <option value="worker">Worker</option>
+                  </select>
+                )}
                 <button type="button" className="btn ghost sm" onClick={() => toggle(u)}>
                   {u.disabled ? "Turn on" : "Turn off"}
                 </button>
@@ -479,7 +503,16 @@ function DealerLogins({ dealer, act, say }: { dealer: Dealer; act: Act; say: Say
                 <input id={`up-${dealer.id}`} type="text" autoComplete="new-password" value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} />
               </label>
             </div>
-            <p className="hint">Using an email that&apos;s already here sets a new password for it.</p>
+            {roles && (
+              <label htmlFor={`ur-${dealer.id}`}>
+                Role
+                <select id={`ur-${dealer.id}`} value={f.role} onChange={(e) => setF({ ...f, role: e.target.value })}>
+                  <option value="worker">Worker: pulls, packs, ships and counts</option>
+                  <option value="manager">Manager: also approves, overrides and sets shop rules</option>
+                </select>
+              </label>
+            )}
+            <p className="hint">Using an email that&apos;s already here sets a new password for it and leaves its role as it is.</p>
             <div className="inline">
               <button type="submit" className="btn sm" disabled={busy || !f.email || f.password.length < 10}>
                 {busy ? "Saving…" : "Save login"}
