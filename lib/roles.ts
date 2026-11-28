@@ -96,6 +96,8 @@ export function eventText(e: { action: string; user_name: string; detail?: Recor
   const order = e.order_number ? ` order #${e.order_number}` : " an order";
   const part = typeof d.name === "string" && d.name ? d.name : typeof d.product_id === "string" ? d.product_id : "a part";
   switch (e.action) {
+    case "pulled":
+      return `${who} pulled the parts for${order}`;
     case "packed":
       return `${who} packed${order}`;
     case "checked":

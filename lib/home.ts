@@ -161,7 +161,7 @@ export function alertsWaiting(a: { queued: number; failed: number }, canSend: bo
   return { n: queued + failed, failed: failed > 0, detail };
 }
 
-type DealerOrder = { status: string; created_at: string; lines: Array<{ location_id: string }>; shipped: Array<{ location_id: string; shipped_at: string }> };
+type DealerOrder = { status: string; created_at: string; lines: Array<{ location_id: string; qty?: number; picked?: number }>; shipped: Array<{ location_id: string; shipped_at: string }> };
 
 export type DealerNeeds = {
   /** Orders with parts on this dealer's shelf that haven't shipped from there. */
@@ -170,16 +170,20 @@ export type DealerNeeds = {
   oldest: string | null;
   /** Orders this dealer finished in the last 7 days. */
   shipped7: number;
+  /** Of the open orders: every part checked off, ready to pack and ship. */
+  pulled: number;
 };
 
 /** A dealer's own quick look: what is waiting on their shelf, and what went out this week. */
 export function dealerNeeds(orders: DealerOrder[], now: number): DealerNeeds {
-  const out: DealerNeeds = { open: 0, oldest: null, shipped7: 0 };
+  const out: DealerNeeds = { open: 0, oldest: null, shipped7: 0, pulled: 0 };
   const week = now - 7 * 86400_000;
   for (const o of orders) {
     const isOpen = o.lines.some((l) => !o.shipped.some((s) => s.location_id === l.location_id));
     if (isOpen) {
       out.open++;
+      const left = o.lines.filter((l) => !o.shipped.some((s) => s.location_id === l.location_id));
+      if (left.every((l) => (l.picked ?? 0) >= (l.qty ?? 1))) out.pulled++;
       if (!out.oldest || o.created_at < out.oldest) out.oldest = o.created_at;
     } else if (o.shipped.length && Math.max(...o.shipped.map((s) => Date.parse(s.shipped_at) || 0)) >= week) {
       out.shipped7++;

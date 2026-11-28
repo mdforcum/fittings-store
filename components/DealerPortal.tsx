@@ -8,6 +8,7 @@ import { money } from "@/lib/catalog";
 import { DEALER_REFRESH_MINUTES } from "@/lib/operations";
 import { OVERRIDE_MIN, checkStep, type DealerRules, type Role } from "@/lib/roles";
 import DealerHome from "./DealerHome";
+import DealerPull, { forgetPullData } from "./DealerPull";
 import DealerStock from "./DealerStock";
 import { KIND_LABEL, monthName, monthOf, totals, type SettlementRow } from "@/lib/settlements";
 import SpaceMapper from "./admin/SpaceMapper";
@@ -158,7 +159,7 @@ function CheckGate({ o, loc, me, rules, onData, children }: { o: PortalOrder; lo
 
   if (step.state === "pack") {
     return (
-      <div className="po-check">
+      <div className="po-gate">
         <p>This shop has {rule} check every order before it ships. Pull and pack the parts, then press the button.</p>
         <button type="button" className="btn" disabled={!!busy} onClick={() => send("check.pack")}>
           {busy ? "Saving…" : "Packed. Ready for a check"}
@@ -171,7 +172,7 @@ function CheckGate({ o, loc, me, rules, onData, children }: { o: PortalOrder; lo
   if (step.state !== "wait" || !check) return null;
   const sayReason = `ovr-${o.id}-${loc}`;
   return (
-    <div className="po-check">
+    <div className="po-gate">
       <p role="status">
         <b>Waiting for a check.</b> Packed by {check.packed_name} on {clock(check.packed_at)}.
       </p>
@@ -378,12 +379,12 @@ function OrderCard({
   labels,
   me,
   rules,
+  saved,
   onData,
   onShip,
   onBought,
-}: { o: PortalOrder; locations: PortalData["locations"]; labels: boolean; me: Me; rules: DealerRules; onData: (d: PortalData) => void } & ShipFns) {
+}: { o: PortalOrder; locations: PortalData["locations"]; labels: boolean; me: Me; rules: DealerRules; saved: boolean; onData: (d: PortalData) => void } & ShipFns) {
   const locs = [...new Set(o.lines.map((l) => l.location_id))];
-  const [picked, setPicked] = useState<Record<string, boolean>>({});
   const name = (id: string) => locations.find((l) => l.id === id)?.name ?? "";
   const pickup = o.ship_method === "pickup";
   return (
@@ -399,20 +400,7 @@ function OrderCard({
         return (
           <div className="po-stop" key={loc}>
             <h3>{locs.length > 1 || locations.length > 1 ? `From ${name(loc)}` : "Pull these parts"}</h3>
-            <ul className="po-lines">
-              {lines.map((l) => (
-                <li key={l.product_id}>
-                  <label className="po-check">
-                    <input type="checkbox" checked={!!picked[`${loc}:${l.product_id}`]} onChange={(e) => setPicked({ ...picked, [`${loc}:${l.product_id}`]: e.target.checked })} />
-                    <span className="po-qty">{l.qty}</span>
-                    <span>
-                      {l.part_number && <span className="mono">{l.part_number} </span>}
-                      {l.name}
-                    </span>
-                  </label>
-                </li>
-              ))}
-            </ul>
+            <DealerPull o={o} loc={loc} lines={lines} saved={saved} shipped={!!done} call={call} onData={onData} />
             {done ? (
               <div className="po-done">
                 <p className="pill ok">
@@ -633,6 +621,7 @@ export default function DealerPortal() {
             className="btn ghost"
             onClick={async () => {
               await call({ action: "logout" });
+              forgetPullData();
               setState("out");
             }}
           >
@@ -697,6 +686,7 @@ export default function DealerPortal() {
               labels={data.labels}
               me={data.me}
               rules={data.rules}
+              saved={data.pull_ready}
               onData={(d) => {
                 setData(d);
                 setMessage("");

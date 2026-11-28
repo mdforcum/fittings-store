@@ -70,10 +70,17 @@ export default function DealerHome({ data, call, go, reload, onData }: { data: P
   const out = lines.filter((l) => l.qty <= 0).length;
   const running = lines.length - out;
   const longest = needs.open && needs.oldest && at ? waited(needs.oldest, at) : "";
+  const toPull = needs.open - needs.pulled;
   const locName = (id: string) => (data.locations.length > 1 ? (data.locations.find((l) => l.id === id)?.name ?? "") : "");
 
   const tiles: Array<{ key: string; n: number | string; label: string; detail: string; to: View; tone: "todo" | "bad" | "clear" }> = [
-    { key: "open", n: needs.open, label: needs.open === 1 ? "Order to pull and ship" : "Orders to pull and ship", detail: longest ? `Longest wait: ${longest}` : "Parts on your shelf, not shipped yet", to: "open", tone: needs.open ? "todo" : "clear" },
+    // With saved check-offs the work splits in two: still to pull, and pulled and ready to pack.
+    ...(data.pull_ready
+      ? [
+          { key: "open", n: toPull, label: toPull === 1 ? "Order to pull" : "Orders to pull", detail: toPull && longest ? `Longest wait: ${longest}` : "Parts still on your shelf", to: "open" as View, tone: (toPull ? "todo" : "clear") as "todo" | "clear" },
+          { key: "pack", n: needs.pulled, label: needs.pulled === 1 ? "Order to pack and ship" : "Orders to pack and ship", detail: "Every part checked off", to: "open" as View, tone: (needs.pulled ? "todo" : "clear") as "todo" | "clear" },
+        ]
+      : [{ key: "open", n: needs.open, label: needs.open === 1 ? "Order to pull and ship" : "Orders to pull and ship", detail: longest ? `Longest wait: ${longest}` : "Parts on your shelf, not shipped yet", to: "open" as View, tone: (needs.open ? "todo" : "clear") as "todo" | "clear" }]),
     ...(data.rules.ready && data.rules.ship_check !== "off"
       ? [{ key: "check", n: waitingCheck, label: waitingCheck === 1 ? "Order waiting for a check" : "Orders waiting for a check", detail: data.rules.ship_check === "manager" ? "Packed. A manager has to check before it ships" : "Packed. A second person has to check before it ships", to: "open" as View, tone: (waitingCheck ? "todo" : "clear") as "todo" | "clear" }]
       : []),

@@ -104,6 +104,14 @@ test("a dealer's quick look: open orders, the longest wait, and what shipped thi
     { status: "shipped", created_at: "2026-11-24T09:00:00Z", lines: [line("a")], shipped: [sent("a", "2026-11-25T10:00:00Z")] }, // done this week
     { status: "shipped", created_at: "2026-11-01T09:00:00Z", lines: [line("a")], shipped: [sent("a", "2026-11-02T10:00:00Z")] }, // done long ago
   ];
-  assert.deepEqual(dealerNeeds(orders, now), { open: 2, oldest: "2026-11-25T09:00:00Z", shipped7: 1 });
-  assert.deepEqual(dealerNeeds([], now), { open: 0, oldest: null, shipped7: 0 });
+  assert.deepEqual(dealerNeeds(orders, now), { open: 2, oldest: "2026-11-25T09:00:00Z", shipped7: 1, pulled: 0 });
+  assert.deepEqual(dealerNeeds([], now), { open: 0, oldest: null, shipped7: 0, pulled: 0 });
+  // With saved check-offs: an open order whose unshipped parts are all checked off is ready to pack.
+  const marked = [
+    { status: "paid", created_at: "2026-11-26T09:00:00Z", lines: [{ location_id: "a", qty: 2, picked: 2 }], shipped: [] },
+    { status: "paid", created_at: "2026-11-26T09:00:00Z", lines: [{ location_id: "a", qty: 2, picked: 1 }], shipped: [] },
+    { status: "paid", created_at: "2026-11-26T09:00:00Z", lines: [{ location_id: "a", qty: 1, picked: 0 }, { location_id: "b", qty: 1, picked: 1 }], shipped: [sent("a", "2026-11-26T10:00:00Z")] },
+  ];
+  assert.equal(dealerNeeds(marked, now).pulled, 2, "the shipped stop's parts don't hold the order back");
+  assert.equal(dealerNeeds(marked, now).open, 3);
 });

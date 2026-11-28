@@ -793,8 +793,8 @@ label.btn:focus-within { outline: 2px solid var(--focus); outline-offset: 2px; }
 
 /* dealer page: the second check, held counts and shop rules */
 .po-who { margin: 4px 0 0; }
-.po-check { display: grid; gap: 8px; justify-items: start; padding: 12px; border: 1px solid var(--rule); border-left: 6px solid var(--zinc); background: var(--surface); margin-top: 8px; }
-.po-check p { margin: 0; }
+.po-gate { display: grid; gap: 8px; justify-items: start; padding: 12px; border: 1px solid var(--rule); border-left: 6px solid var(--zinc); background: var(--surface); margin-top: 8px; }
+.po-gate p { margin: 0; }
 .po-checked { margin: 8px 0; padding: 8px 12px; border-left: 4px solid var(--ok); background: var(--ok-bg); }
 .po-override { display: grid; gap: 6px; width: 100%; }
 .po-override label { display: grid; gap: 4px; font-weight: 600; }
@@ -805,7 +805,7 @@ label.btn:focus-within { outline: 2px solid var(--focus); outline-offset: 2px; }
 .dh-rules input { width: 110px; }
 .dh-rules select, .dh-rules input { min-height: 48px; }
 .dh-rules p { margin: 0; }
-@media print { .po-check, .po-checked, .po-who { display: none; } }
+@media print { .po-gate, .po-checked, .po-who { display: none; } }
 
 /* bin labels: a control panel on screen, sheets of labels on paper */
 .bl-controls { padding: 18px 0; display: grid; gap: 10px; }
@@ -839,3 +839,18 @@ label.btn:focus-within { outline: 2px solid var(--focus); outline-offset: 2px; }
   .bl-plain .bl-label { outline: 1px dashed #000; }
   .bl-blank { background: none; }
 }
+
+/* dealer page: pulling an order */
+.pl { display: grid; gap: 8px; }
+.pl-scan { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: end; }
+.pl-scan label { display: grid; gap: 4px; font-weight: 600; min-width: 0; }
+.pl-scan input { width: 100%; min-width: 0; box-sizing: border-box; min-height: 48px; font-size: 1.05rem; }
+.pl-lines li { border: 1px solid var(--rule); background: var(--surface); padding: 4px 10px; }
+.pl-lines li.done { border-left: 6px solid var(--ok); }
+.pl-lines li.done .po-qty { color: var(--ok); }
+.pl-where { display: block; }
+.pl-count { color: var(--hold); }
+.pl-wrong { margin: 0; padding: 12px; border: 2px solid var(--bad); border-left-width: 8px; background: var(--bad-bg); color: var(--bad); font-weight: 700; font-size: 1.1rem; }
+.pl-progress { margin: 0; }
+@media (max-width: 640px) { .pl-scan { grid-template-columns: minmax(0, 1fr); } }
+@media print { .pl-scan, .pl .ls, .pl-wrong, .pl .pf-note, .pl-progress { display: none; } .pl-lines li { border: 0; padding: 0; } }

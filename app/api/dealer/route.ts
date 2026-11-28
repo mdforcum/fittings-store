@@ -7,6 +7,8 @@ import { LABELS_KEY, QUOTE_MINUTES, labelCharge, packageGuess, parcelFrom, quote
 import { DEALER_REFRESH_KEY, IMPORT_LIMIT, locationShipFrom, readDealerRefresh, runningLow, type LowLine } from "@/lib/operations";
 import { buildIndex, readPartPhoto } from "@/lib/lookup-server";
 import { onhandMap } from "@/lib/places";
+import { pullOrder, pullProgress, type PullLine } from "@/lib/pulling";
+import { findIt, type Spot } from "@/lib/shelf";
 import { OVERRIDE_MIN, checkProblem, readRules, splitCounts, type DealerRules, type Role, type ShipCheck } from "@/lib/roles";
 import { normalizeLocation } from "@/lib/places";
 import { monthOf, monthRange, readSettlement } from "@/lib/settlements";
@@ -31,7 +33,7 @@ export type PortalOrder = {
   ship_to: Record<string, string> | null;
   notes: string;
   /** Only the parts this dealer pulls, by location. */
-  lines: Array<{ product_id: string; name: string; part_number: string; qty: number; location_id: string }>;
+  lines: PullLine[];
   shipped: Array<{ location_id: string; carrier: string; tracking_number: string; shipped_at: string; has_label: boolean }>;
   /** A starting package for each location, from the parts' saved weight and box size. Blank where unknown. */
   packages: Record<string, { weight_lb: string; length: string; width: string; height: string }>;
@@ -86,6 +88,8 @@ export type PortalData = {
   rules: DealerRules;
   /** Counts waiting for a manager: all of them for a manager, a worker's own for a worker. */
   waiting: PortalWaiting[];
+  /** Check-offs are saved (supabase/add-pull-marks.sql has run); otherwise they last only on this screen. */
+  pull_ready: boolean;
 };
 
 async function load(db: SupabaseClient, s: DealerSession): Promise<PortalData> {
@@ -134,6 +138,7 @@ async function load(db: SupabaseClient, s: DealerSession): Promise<PortalData> {
     me: { id: s.user.id, name: s.user.name || s.user.email, role: s.user.role },
     rules,
     waiting,
+    pull_ready: false,
   };
   if (!mine.length) return base;
   const al = await db.from("fittings_allocations").select("order_id, product_id, location_id, qty").in("location_id", mine).limit(5000);
@@ -158,6 +163,19 @@ async function load(db: SupabaseClient, s: DealerSession): Promise<PortalData> {
     shipments(),
   ]);
   const shipRows = (sh.error ? [] : (sh.data ?? [])) as unknown as Array<Record<string, unknown>>;
+  // Saved check-offs (supabase/add-pull-marks.sql) and where each part sits, for the walk.
+  const allParts = [...new Set((al.data ?? []).map((a) => a.product_id as string))].slice(0, 1000);
+  const [pm, ps, sp] = await Promise.all([
+    db.from("fittings_pull_marks").select("order_id, location_id, product_id, picked_qty, picked_name").in("order_id", ids.slice(0, 1000)).in("location_id", mine),
+    allParts.length ? db.from("fittings_products").select("id, spot_id").in("id", allParts) : Promise.resolve({ data: [], error: null }),
+    db.from("fittings_shelf_spots").select("id, parent_id, level, code, label, sort").limit(20000),
+  ]);
+  const pullReady = !pm.error;
+  const markOf = new Map(((pm.error ? [] : (pm.data ?? [])) as Array<Record<string, unknown>>).map((m) => [`${m.order_id}:${m.location_id}:${m.product_id}`, m]));
+  const spots = (sp.error ? [] : (sp.data ?? [])) as Spot[];
+  const spotOf = new Map(((ps.error ? [] : (ps.data ?? [])) as Array<{ id: string; spot_id: string | null }>).map((p) => [p.id, p.spot_id]));
+  const binOf = new Map<string, PullLine["bin"]>();
+  for (const id of allParts) binOf.set(id, findIt(spots, spotOf.get(id)));
   // Saved shipping details for the parts on these orders (blank when a part has none).
   const partIds = [...new Set((al.data ?? []).map((a) => a.product_id as string))];
   const pd = partIds.length ? await db.from("fittings_products").select("id, weight_oz, length_in, width_in, height_in").in("id", partIds.slice(0, 1000)) : { data: [], error: null };
@@ -189,12 +207,24 @@ async function load(db: SupabaseClient, s: DealerSession): Promise<PortalData> {
       phone: (r.phone as string | null) ?? null,
       ship_to: (r.ship_to as Record<string, string> | null) ?? null,
       notes: (r.notes as string) ?? "",
-      lines: (al.data ?? [])
-        .filter((a) => a.order_id === r.id)
-        .map((a) => {
-          const it = r.items.find((i) => i.product_id === a.product_id);
-          return { product_id: a.product_id as string, name: it?.name ?? (a.product_id as string), part_number: it?.part_number ?? "", qty: a.qty as number, location_id: a.location_id as string };
-        }),
+      lines: pullOrder(
+        (al.data ?? [])
+          .filter((a) => a.order_id === r.id)
+          .map((a): PullLine => {
+            const it = r.items.find((i) => i.product_id === a.product_id);
+            const mark = markOf.get(`${a.order_id}:${a.location_id}:${a.product_id}`);
+            return {
+              product_id: a.product_id as string,
+              name: it?.name ?? (a.product_id as string),
+              part_number: it?.part_number ?? "",
+              qty: a.qty as number,
+              picked: Math.min(Math.max(0, Number(mark?.picked_qty ?? 0)), a.qty as number),
+              picked_name: String(mark?.picked_name ?? ""),
+              location_id: a.location_id as string,
+              bin: binOf.get(a.product_id as string) ?? null,
+            };
+          }),
+      ),
       shipped: shipRows
         .filter((x) => x.order_id === r.id)
         .map((x) => ({
@@ -208,7 +238,7 @@ async function load(db: SupabaseClient, s: DealerSession): Promise<PortalData> {
       checks: checksFor(r.id as string),
     }),
   );
-  return { ...base, orders };
+  return { ...base, orders, pull_ready: pullReady };
 }
 
 const bad = (message: string, status = 400) => json({ ok: false, message }, status);
@@ -361,6 +391,30 @@ async function run(action: string, a: Payload, db: SupabaseClient, s: DealerSess
 
   // The dealer's own shelves -------------------------------------------------------------
   if (action === "stock.load") return json({ ok: true, result: { stock: await loadStock(db, s) } });
+
+  // Checking parts off as they are pulled ---------------------------------------------
+  if (action === "pull.mark") {
+    if (!isId(a.order_id) || !isId(a.location_id)) return bad("Pick the order.");
+    const pid = str(a.product_id, 80);
+    const qty = typeof a.qty === "number" && Number.isInteger(a.qty) ? a.qty : -1;
+    if (!pid || qty < 0) return bad("Pick the part.");
+    if (!(await myLocations(db, s)).some((l) => l.id === a.location_id)) return bad("That isn't one of your locations.", 403);
+    const al = await db.from("fittings_allocations").select("product_id, qty").eq("order_id", a.order_id).eq("location_id", a.location_id);
+    const want = ((al.data ?? []) as Array<{ product_id: string; qty: number }>).find((x) => x.product_id === pid);
+    if (!want) return bad("That part isn't on this order here.");
+    if (qty > want.qty) return bad(`This order needs ${want.qty} of those.`);
+    const who = s.user.name || s.user.email;
+    const r = await db
+      .from("fittings_pull_marks")
+      .upsert({ order_id: a.order_id, location_id: a.location_id, product_id: pid, picked_qty: qty, picked_by: s.user.id, picked_name: who, picked_at: new Date().toISOString() }, { onConflict: "order_id,location_id,product_id" });
+    if (r.error) return bad("Check-offs can't be saved yet. Tick the parts on this screen for now.");
+    // When this part of the order is fully pulled, put it on the record once.
+    const marks = await db.from("fittings_pull_marks").select("product_id, picked_qty").eq("order_id", a.order_id).eq("location_id", a.location_id);
+    const got = new Map(((marks.data ?? []) as Array<{ product_id: string; picked_qty: number }>).map((m) => [m.product_id, m.picked_qty]));
+    const done = pullProgress(((al.data ?? []) as Array<{ product_id: string; qty: number }>).map((x) => ({ qty: x.qty, picked: got.get(x.product_id) ?? 0 }))).done;
+    if (done && qty === want.qty) await logEvent(db, s, "pulled", { order_id: a.order_id, location_id: a.location_id });
+    return json({ ok: true, data: await load(db, s), result: { done } });
+  }
 
   // The second check before shipping -------------------------------------------------
   if (action === "check.pack" || action === "check.pass") {
