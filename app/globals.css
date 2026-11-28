@@ -854,3 +854,12 @@ label.btn:focus-within { outline: 2px solid var(--focus); outline-offset: 2px; }
 .pl-progress { margin: 0; }
 @media (max-width: 640px) { .pl-scan { grid-template-columns: minmax(0, 1fr); } }
 @media print { .pl-scan, .pl .ls, .pl-wrong, .pl .pf-note, .pl-progress { display: none; } .pl-lines li { border: 0; padding: 0; } }
+
+/* dealer Stock tab: receiving a shipment by scan */
+.ds-mode { display: flex; align-items: center; gap: 10px; min-height: 48px; font-weight: 600; cursor: pointer; }
+.ds-mode input { width: 24px; height: 24px; flex: none; }
+.ds-receive { display: grid; gap: 8px; justify-items: start; padding: 12px; border: 1px solid var(--rule); border-left: 6px solid var(--zinc); background: var(--surface); }
+.ds-receive p { margin: 0; }
+.ds-receive label { display: grid; gap: 4px; font-weight: 600; }
+.ds-receive input { width: 8rem; min-height: 48px; font-size: 1.2rem; }
+.ds-putaway { font-size: 1.1rem; }

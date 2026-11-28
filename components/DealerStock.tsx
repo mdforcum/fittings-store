@@ -3,7 +3,7 @@
 // Set a count, take one off for a counter sale, see what's running low, or
 // load a count spreadsheet. Counts only: prices and new parts are set by
 // Backroad Iron.
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { PortalData, PortalStock } from "@/app/api/dealer/route";
 import { money } from "@/lib/catalog";
 import { EMPTY_INDEX, smartSearch, type LookupBin, type LookupIndex, type PhotoRead } from "@/lib/lookup";
@@ -28,6 +28,10 @@ export default function DealerStock({ locations, supportEmail, call, onHeld }: {
   const [rows, setRows] = useState<string[][] | null>(null);
   const [fileName, setFileName] = useState("");
   const [importing, setImporting] = useState(false);
+  // Receiving: scan a part, type how many came in, and it goes back to the box for the next one.
+  const [receiving, setReceiving] = useState(false);
+  const [came, setCame] = useState("");
+  const cameBox = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let live = true;
@@ -88,6 +92,20 @@ export default function DealerStock({ locations, supportEmail, call, onHeld }: {
     setBusy(`count:${id}`);
     const ok = done(await call({ action: "stock.count", location_id: loc, lines: [{ product_id: id, qty: n }] }), `${name}: count set to ${n} at ${locName}.`);
     if (ok) setTyped((t) => ({ ...t, [id]: "" }));
+  }
+
+  async function receive(id: string, name: string) {
+    const n = Number.parseInt(came, 10);
+    if (!Number.isInteger(n) || n < 1) return setNote({ text: "Enter how many came in, 1 or more.", bad: true });
+    setBusy(`rcv:${id}`);
+    const was = stock?.onhand[id]?.[loc] ?? 0;
+    const ok = done(await call({ action: "stock.receive", location_id: loc, product_id: id, qty: n }), `Added ${n} of ${name} at ${locName}. Now ${was + n} on your shelf.`);
+    if (ok) {
+      setCame("");
+      setPicked("");
+      // Back to the box, ready for the next scan.
+      setTimeout(() => document.getElementById("ds-q")?.focus(), 60);
+    }
   }
 
   async function soldOne(id: string, name: string) {
@@ -176,6 +194,19 @@ export default function DealerStock({ locations, supportEmail, call, onHeld }: {
         </details>
       )}
 
+      <label className="ds-mode">
+        <input
+          type="checkbox"
+          checked={receiving}
+          onChange={(e) => {
+            setReceiving(e.target.checked);
+            setPicked("");
+            setBin(null);
+            setCame("");
+          }}
+        />{" "}
+        A shipment came in: scan each part and type how many
+      </label>
       <PartFinder
         parts={stock.products}
         index={index}
@@ -197,12 +228,59 @@ export default function DealerStock({ locations, supportEmail, call, onHeld }: {
         onPick={(id) => {
           setPicked(id);
           setBin(null);
+          if (receiving) {
+            setCame("");
+            setTimeout(() => cameBox.current?.focus(), 80);
+          }
         }}
         photo={async (image, type) => {
           const r = await call({ action: "lookup.photo", image, type });
           return r.ok ? { read: r.result?.read as PhotoRead } : { problem: r.message };
         }}
       />
+      {receiving &&
+        picked &&
+        (() => {
+          const p = stock.products.find((x) => x.id === picked);
+          if (!p) return null;
+          const here = index.bins.find((b) => b.product_ids.includes(p.id));
+          const have = onShelf(p.id) ?? 0;
+          return (
+            <form
+              className="ds-receive"
+              aria-label={`Receive ${p.name}`}
+              onSubmit={(e) => {
+                e.preventDefault();
+                void receive(p.id, p.name);
+              }}
+            >
+              <p>
+                <b>
+                  {p.part_number && <span className="mono">{p.part_number} </span>}
+                  {p.name}
+                </b>
+                <span className="hint"> · {have} on your shelf now</span>
+              </p>
+              <p className="ds-putaway">
+                {here ? (
+                  <>
+                    Put it in bin <b className="mono">{here.code}</b>
+                    {here.line ? <span className="hint"> ({here.line})</span> : null}
+                  </>
+                ) : (
+                  <span className="hint">This part has no bin on your shelf map yet.</span>
+                )}
+              </p>
+              <label htmlFor="ds-came">
+                How many came in
+                <input id="ds-came" ref={cameBox} inputMode="numeric" autoComplete="off" value={came} onChange={(e) => setCame(e.target.value.replace(/\D/g, ""))} />
+              </label>
+              <button type="submit" className="btn" disabled={busy === `rcv:${p.id}` || !came}>
+                {busy === `rcv:${p.id}` ? "Saving…" : "Add to the shelf"}
+              </button>
+            </form>
+          );
+        })()}
       {(bin || picked) && (
         <button
           type="button"

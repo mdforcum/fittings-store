@@ -476,6 +476,23 @@ async function run(action: string, a: Payload, db: SupabaseClient, s: DealerSess
   // Home's quick look: what's running low on this dealer's own shelves.
   if (action === "home") return json({ ok: true, result: { low: await loadLow(db, s) } });
 
+  // A shipment came in: add to the count, in the person's name. Receiving is not a recount, so it
+  // goes through for workers too; every receive is on the activity record.
+  if (action === "stock.receive") {
+    if (!isId(a.location_id)) return bad("Pick the location.");
+    if (!(await myLocations(db, s)).some((l) => l.id === a.location_id)) return bad("That isn't one of your locations.", 403);
+    const pid = str(a.product_id, 80);
+    const qty = typeof a.qty === "number" && Number.isInteger(a.qty) ? a.qty : 0;
+    if (!pid || qty < 1 || qty > 100000) return bad("Enter how many came in, 1 or more.");
+    const pr = await db.from("fittings_products").select("name").eq("id", pid).maybeSingle();
+    if (pr.error || !pr.data) return bad("That part isn't in the catalog. Email Backroad Iron to add it.");
+    const who = s.user.name || s.user.email;
+    const r = await db.rpc("fittings_adjust_qty", { p_id: pid, p_delta: qty, p_kind: "receive", p_note: `Dealer page, received by ${who}`.slice(0, 200), p_location: a.location_id });
+    if (r.error) return bad("That didn't save. Try again.");
+    await logEvent(db, s, "received", { location_id: a.location_id, detail: { product_id: pid, name: pr.data.name, qty } });
+    return json({ ok: true, result: { stock: await loadStock(db, s) } });
+  }
+
   if (action === "stock.count" || action === "stock.sold") {
     if (!isId(a.location_id)) return bad("Pick the location.");
     if (!(await myLocations(db, s)).some((l) => l.id === a.location_id)) return bad("That isn't one of your locations.", 403);

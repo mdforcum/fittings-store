@@ -118,6 +118,8 @@ export function eventText(e: { action: string; user_name: string; detail?: Recor
       return `${who} approved ${String(d.asked_by ?? "a worker")}'s count of ${part}: ${String(d.from ?? "?")} to ${String(d.to ?? "?")}`;
     case "count_declined":
       return `${who} turned down ${String(d.asked_by ?? "a worker")}'s count of ${part}: ${String(d.from ?? "?")} to ${String(d.to ?? "?")}`;
+    case "received":
+      return `${who} received ${String(d.qty ?? "some")} of ${part}`;
     case "sold":
       return `${who} sold ${String(d.qty ?? 1)} of ${part} at the counter`;
     case "rules":
